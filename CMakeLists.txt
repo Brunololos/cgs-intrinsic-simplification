@@ -9,6 +9,7 @@ endif()
 message(STATUS "cmake build type: ${CMAKE_BUILD_TYPE}")
 
 # Libigl
+option(LIBIGL_LSCM         "Build target igl::lscm"         ON)
 option(LIBIGL_GLFW         "Build target igl::glfw"         ON)
 option(LIBIGL_IMGUI        "Build target igl::imgui"        ON)
 option(LIBIGL_OPENGL       "Build target igl::opengl"       ON)

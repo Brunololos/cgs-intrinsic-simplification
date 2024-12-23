@@ -1,20 +1,26 @@
 #ifndef ISIMP_UTILS_H
 #define ISIMP_UTILS_H
 
-#define _USE_MATH_DEFINES
+#include <utility>
 
-#include <iomanip>
-#include <math.h>
 #include "tinyad_defs.hpp"
 #include "print.hpp"
 
-enum class RAXIS {
-    YAW = 0,
-    PITCH = 1,
-    ROLL = 2,
-    NONE = 3
-};
+#include "isimp_data.hpp"
+// register a point to be tracked through the simplification
+void register_point(iSimpData& iSData, const BarycentricPoint point, const int face_idx);
+void map_registered(iSimpData& iSData);
+// TODO: implement simplification operations
+// returns whether the edge flip could be performed/was successful
+bool flip_intrinsic(iSimpData& iSData, const gcs::Edge edge);
+void flatten_vertex(iSimpData& iSData, const int vertex_idx);
+void remove_vertex(iSimpData& iSData, const int vertex_idx);
 
-Eigen::MatrixXd rotate_selected(Eigen::MatrixXd U, Eigen::VectorXi selected_ids, RAXIS rot_axis, double angle);
+std::array<int, 5> order_quad_edge_indices(const gcs::Edge& edge, const int Fk_unique_v, const int Fl_unique_v);
+std::array<int, 4> order_quad_vertex_indices(const gcs::Edge& edge);
+std::array<int, 4> order_quad_vertex_indices(const gcs::Edge& edge, const int Fk_unique_v, const int Fl_unique_v);
+
+// returns faceindex and value
+std::pair<int, int> find_unique_vertex_index(const gcs::Face& F, const gcs::Edge& edge);
 
 #endif

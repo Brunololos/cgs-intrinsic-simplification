@@ -2,6 +2,7 @@
 #define PRINT_H
 
 #include "tinyad_defs.hpp"
+#include "gcs_defs.hpp"
 
 // Reset
 static const std::string RESET = "\033[0m";
@@ -20,8 +21,20 @@ static const std::string GRAY = "\033[0;90m";
 void printEigenMatrixXi(std::string name, Eigen::Matrix<int, Eigen::Dynamic, Eigen::Dynamic> M);
 void printEigenMatrixXd(std::string name, Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic> M);
 void printEigenMatrixXcd(std::string name, Eigen::Matrix<std::complex<double>, Eigen::Dynamic, Eigen::Dynamic> M);
+void printEigenMatrixXuc(std::string name, Eigen::Matrix<unsigned char, Eigen::Dynamic, Eigen::Dynamic> M);
 void printTinyADMatrix(std::string name, Eigen::Matrix<ADDouble, Eigen::Dynamic, Eigen::Dynamic> M);
 void printTinyAD9Matrix(std::string name, Eigen::Matrix<ADDouble9, Eigen::Dynamic, Eigen::Dynamic> M);
+
+void printEigenVector3d(std::string name, Eigen::Vector3d p);
+void printEigenVector2d(std::string name, Eigen::Vector2d p);
+void printEigenVector3d(Eigen::Vector3d p);
+void printEigenVector2d(Eigen::Vector2d p);
+
+void printGCSFace(gcs::Face f);
+void printGCSFace(std::string name, gcs::Face f);
+
+std::string to_str(Eigen::Vector3d p);
+std::string to_str(Eigen::Vector2d p);
 
 std::string repeat(std::string string, int number_of_repetitions);
 std::string dye(std::string string, std::string color);
