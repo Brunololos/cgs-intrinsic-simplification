@@ -63,9 +63,31 @@ double flipped_edgelength(const Quad2D& trianglepair)
   return (trianglepair.row(2) - trianglepair.row(3)).norm();
 }
 
+// Point in triangle check logic adopted from: https://stackoverflow.com/questions/2049582/how-to-determine-if-a-point-is-in-a-2d-triangle
+double sign_helper(const double px, const double py, const Point2D p1, const Point2D p2)
+{
+    return (px - p2[0]) * (p1[1] - p2[1]) - (p1[0] - p2[0]) * (py - p2[1]);
+}
+
+bool lies_inside_triangle(const double px, const double py, const Point2D v0, const Point2D v1, const Point2D v2)
+{
+  double d0, d1, d2;
+  bool found_neg, found_pos;
+
+  d0 = sign_helper(px, py, v0, v1);
+  d1 = sign_helper(px, py, v1, v2);
+  d2 = sign_helper(px, py, v2, v0);
+
+  found_neg = (d0 < 0) || (d1 < 0) || (d2 < 0);
+  found_pos = (d0 > 0) || (d1 > 0) || (d2 > 0);
+
+  return !(found_neg && found_pos);
+}
+
 Point2D to_explicit(const BarycentricPoint& bary_point, const Point2D& A, const Point2D& B, const Point2D& C)
 {
-  std::cout << "making explicit, barycentric point " << to_str(bary_point) << " as convex combination of A: " << to_str(A) << ", B: " << to_str(B) << " and C: " << to_str(C) << std::endl;
+  // TODO: remove print
+  // std::cout << "making explicit, barycentric point " << to_str(bary_point) << " as convex combination of A: " << to_str(A) << ", B: " << to_str(B) << " and C: " << to_str(C) << std::endl;
   return A*bary_point(0) + B*bary_point(1) + C*bary_point(2);
 }
 
@@ -73,7 +95,8 @@ Point2D to_explicit(const BarycentricPoint& bary_point, const Point2D& A, const 
 // Barycentric point calculation adopted from: https://gamedev.stackexchange.com/questions/23743/whats-the-most-efficient-way-to-find-barycentric-coordinates
 BarycentricPoint to_barycentric(const Point2D& point, const Point2D& A, const Point2D& B, const Point2D& C)
 {
-  std::cout << "making barycentric, explicit point " << to_str(point) << " as convex combination of A: " << to_str(A) << ", B: " << to_str(B) << " and C: " << to_str(C) << std::endl;
+  // TODO: remove print
+  // std::cout << "making barycentric, explicit point " << to_str(point) << " as convex combination of A: " << to_str(A) << ", B: " << to_str(B) << " and C: " << to_str(C) << std::endl;
   Vector2D AB = B - A;
   Vector2D AC = C - A;
   Vector2D AP = point - A;
@@ -86,7 +109,8 @@ BarycentricPoint to_barycentric(const Point2D& point, const Point2D& A, const Po
   double denominator = D00 * D11 - D01 * D01;
   double x2 = (D11 * D20 - D01 * D21) / denominator;
   double x3 = (D00 * D21 - D01 * D20) / denominator;
-  double x1 = (1.0f - x2 - x3) / denominator;
+  double x1 = (1.0f - x2 - x3);
+
   return BarycentricPoint(x1, x2, x3);
 }
 
@@ -95,7 +119,8 @@ double angle_i_from_lengths(const double l_ij, const double l_ik, const double l
   // TODO: It might be that the denominator becomes zero because we work on Delta complexes where distances can become zero.
   double enumerator = l_ij*l_ij + l_ik*l_ik - l_jk*l_jk;
   double denominator = 2 * l_ij * l_ik;
-  std::cout << "Calcing theta_i_... enumerator=" << enumerator << ", denominator=" << denominator << std::endl; // TODO: remove
+  // TODO: remove print
+  // std::cout << "Calcing theta_i_... enumerator=" << enumerator << ", denominator=" << denominator << std::endl; // TODO: remove
   assertm(denominator != 0, "angle_i_from_lengths: Denominator became zero!");
   assertm(enumerator / denominator < 0, "angle_i_from_lengths: cos(theta) became less than zero! We need to implement a case for obtuse triangles.");
   return acos(enumerator / denominator);

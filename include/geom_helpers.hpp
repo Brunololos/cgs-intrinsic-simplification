@@ -16,6 +16,7 @@
 
 // semantic typedefs
 typedef double Bias;
+typedef Eigen::Vector2i TexCoord;
 typedef Eigen::Vector2d Point2D, Normal2D, Vector2D;
 typedef Eigen::Vector3d Point3D, BarycentricPoint;
 typedef Eigen::Matrix<double, 4, 2> Quad2D; // first two positions are the common vertices and the last two are the unique ones
@@ -32,6 +33,8 @@ Eigen::MatrixXd rotate_selected(Eigen::MatrixXd U, const Eigen::VectorXi selecte
 // unfolds intrinsic triangles ijk, ijl into an extrinsic 2d representation
 Quad2D unfold(const double l_ij, const double l_ik, const double l_jk, const double l_il, const double l_jl);
 double flipped_edgelength(const Quad2D& trianglepair);
+
+bool lies_inside_triangle(const double px, const double py, const Point2D v0, const Point2D v1, const Point2D v2);
 
 Point2D to_explicit(const BarycentricPoint& bary_point, const Point2D& A, const Point2D& B, const Point2D& C);
 BarycentricPoint to_barycentric(const Point2D& point, const Point2D& A, const Point2D& B, const Point2D& C);

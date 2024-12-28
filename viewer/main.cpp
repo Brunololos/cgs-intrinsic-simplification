@@ -68,10 +68,10 @@ int main(int argc, char *argv[])
   // Eigen::Matrix<unsigned char,Eigen::Dynamic,Eigen::Dynamic> R,G,B,A;
   // igl::png::readPNG(argc > 2 ? argv[2] : "../textures/texture.png", R,G,B,A);
   // igl::png::readPNG("../textures/deformedCube (during optimisation).png", R,G,B,A);
-  R = 255 * MatrixXuc::Ones(TEXTURE_HEIGHT, TEXTURE_WIDTH);
-  G = 255 * MatrixXuc::Ones(TEXTURE_HEIGHT, TEXTURE_WIDTH);
-  B = 255 * MatrixXuc::Ones(TEXTURE_HEIGHT, TEXTURE_WIDTH);
-  A = 255 * MatrixXuc::Ones(TEXTURE_HEIGHT, TEXTURE_WIDTH);
+  R = 255 * MatrixXuc::Ones(TEXTURE_WIDTH, TEXTURE_HEIGHT);
+  G = 255 * MatrixXuc::Ones(TEXTURE_WIDTH, TEXTURE_HEIGHT);
+  B = 255 * MatrixXuc::Ones(TEXTURE_WIDTH, TEXTURE_HEIGHT);
+  A = 255 * MatrixXuc::Ones(TEXTURE_WIDTH, TEXTURE_HEIGHT);
 
   Eigen::MatrixXd CM = (Eigen::MatrixXd(9,3)<<
       //0.8,0.8,0.8,                        // 0 gray
@@ -88,38 +88,67 @@ int main(int argc, char *argv[])
 
   // coloring
   int numVorF = (true /* true: visualize over vertices, false: visualize over faces */) ? V.rows() : F.rows();
+  // TODO: C can be removed, we now render colors differently
   Eigen::MatrixXd C = Eigen::MatrixXd(numVorF, 3);
   for ( int i=0; i<numVorF; i++)
   {
     C.row(i) = CM.row(i % 9);
   }
 
+  // NOTE: this approach assumes, that all triangles lie completely within the texture. (No triangles wrap around the outside.)
+  // I note this here, because lscm sometimes yields uv-coordinates that exceed the [0, 1] bounds. (They can be negative and their absolute value can exceed 1.)
+  // To fix this I translated & rescaled all uv's to be withing [0, 1]. Because we don't have a set texture and build it ourselves, this is fine.
   auto register_texels = [&](){
         std::cout << "Registering texels: " << std::endl;
         for (gcs::Face F : iSData.inputMesh->faces())
         {
           std::cout << "-> for extrinsic face: " << F << std::endl;
+          std::array<int, 3> verts = std::array<int, 3>();
+          int i=0;
           for (gcs::Vertex V : F.adjacentVertices())
           {
-            std::cout << "---> texturing intrinsic vertex: " << V << std::endl;
-            int v_idx = V.getIndex();
-            Eigen::Vector2d uv = UV.row(v_idx);
-            std::cout << "---> that maps to u: " << uv[0] << ", v: " << uv[1] << std::endl;
-            // int x = TEXTURE_WIDTH - (int) ((uv[0] + 1.0) / 2.0 * TEXTURE_WIDTH);
-            // int y = TEXTURE_HEIGHT - (int) ((uv[1] + 1.0) / 2.0 * TEXTURE_HEIGHT);
-            int x = (int) ((uv[0]) * TEXTURE_WIDTH);
-            int y = (int) ((uv[1]) * TEXTURE_HEIGHT);
-            if (x < 0) { x += TEXTURE_WIDTH; }
-            if (y < 0) { y += TEXTURE_HEIGHT; }
+            verts[i] = V.getIndex();
+            i++;
           }
-          // NOTE: this approach assumes, that all triangles lie completely within the texture. (No triangles wrap around the outside.)
-          // I note this here, because lscm sometimes yields uv-coordinates that exceed the [0, 1] bounds. (They can be negative and their absolute value can exceed 1.)
-          // To fix this I translated & rescaled all uv's to be withing [0, 1]. Because we don't have a set texture and build it ourselves, this is fine.
 
-          // TODO: find triangle spanned by the uv-coordinates of the three corner vertices
-          // TODO: find bounds on texels that might lie within the triangle
-          // TODO: iterate through the texel-candidates and check for each if it lies within the triangle.
-          // TODO: ---> IF it lies within the triangle, reexpress it barycentrically vie the uv-coordinates and register it for the mapping.
+          // mapping from uv- to texture space
+          Eigen::Matrix2d TexExt;
+          TexExt << TEXTURE_WIDTH, 0,
+                    0, TEXTURE_HEIGHT;
+
+          // triangle corners in texture space
+          Point2D t0 = UV.row(verts[0]) * TexExt;
+          Point2D t1 = UV.row(verts[1]) * TexExt;
+          Point2D t2 = UV.row(verts[2]) * TexExt;
+
+          // triangle bounding box
+          double minx = std::min(t0[0], std::min(t1[0], t2[0]));
+          double maxx = std::max(t0[0], std::max(t1[0], t2[0]));
+          double miny = std::min(t0[1], std::min(t1[1], t2[1]));
+          double maxy = std::max(t0[1], std::max(t1[1], t2[1]));
+
+          // iterate over triangle bounding box & register points contained in the triangle
+          for (int i = std::floor(minx); i <= std::floor(maxx); i++)
+          {
+            for (int j = std::floor(miny); j <= std::floor(maxy); j++)
+            {
+              if (lies_inside_triangle(i, j, t0, t1, t2))
+              {
+                // std::cout << to_str(Point2D(i, j)) << std::endl;
+                BarycentricPoint bp = to_barycentric(Point2D(i, j), t0, t1, t2);
+                // std::cout << "Expressing texture coordinate: (" << i << ", " << j << ") barycentrically of: A=" << to_str(t0) << ", B=" << to_str(t1) << ", C=" << to_str(t2) << std::endl;
+                // std::cout << "Created barycentric point: " << to_str(bp) << std::endl;
+                // std::cout << "Converting back into explicit form 012, we get: " << to_str(to_explicit(bp, t0, t1, t2)) << std::endl;
+                // std::cout << "Converting back into explicit form 021, we get: " << to_str(to_explicit(bp, t0, t2, t1)) << std::endl;
+                // std::cout << "Converting back into explicit form 102, we get: " << to_str(to_explicit(bp, t1, t0, t2)) << std::endl;
+                // std::cout << "Converting back into explicit form 120, we get: " << to_str(to_explicit(bp, t1, t2, t0)) << std::endl;
+                // std::cout << "Converting back into explicit form 201, we get: " << to_str(to_explicit(bp, t2, t0, t1)) << std::endl;
+                // std::cout << "Converting back into explicit form 210, we get: " << to_str(to_explicit(bp, t2, t1, t0)) << std::endl;
+                TexCoord tc = TexCoord(i, j);
+                register_point(iSData, bp, tc, F.getIndex());
+              }
+            }
+          }
         }
   };
 
@@ -182,24 +211,24 @@ int main(int argc, char *argv[])
   
   const auto & update_texture = [&]()
   {
-    // Eigen::MatrixXuc M;
-    // TODO: set R, G, B depending on mapping to coarse mesh
-    // YImage yimg;
-    // yimg.load(argv[2]);
-    // R.resize(yimg.width(),yimg.height());
-    // B.resize(R.rows(),R.cols());
-    // G.resize(R.rows(),R.cols());
-    // for(int i = 0;i<yimg.width();i++)
-    // {
-    //   for(int j = 0;j<yimg.height();j++)
-    //   {
-    //     const auto & p = yimg.at(i,j);
-    //     R(i,yimg.height()-1-j) = p.r;
-    //     G(i,yimg.height()-1-j) = p.g;
-    //     B(i,yimg.height()-1-j) = p.b;
-    //   }
-    // }
-    // viewer.data().set_texture(R, G, B);
+    int num_triangles = iSData.mapped_by_triangle.size();
+    for (int i=0; i<num_triangles; i++)
+    {
+      // Color = colors(i%10)
+      for (int j=0; j<iSData.mapped_by_triangle[i].size(); j++)
+      {
+        int original_idx = iSData.mapped_by_triangle[i][j];
+        // BarycentricPoint original_point = iSData.tracked_points[original_idx];
+        // Point2D tex_coord = to_explicit(original_point, );
+        TexCoord texcoord = iSData.tracked_texcoords[original_idx];
+        R(texcoord[0], texcoord[1]) = CM(i % 9, 0) * 255;
+        G(texcoord[0], texcoord[1]) = CM(i % 9, 1) * 255;
+        B(texcoord[0], texcoord[1]) = CM(i % 9, 2) * 255;
+        // std::cout << "Setting texcoord: (" << texcoord[0] << ", " << texcoord[1] << "): R=" << CM(i%9, 0) << ", G=" << CM(i%9, 1) << ", B=" << CM(i%9, 2) << std::endl;
+      }
+    }
+    viewer.data().set_texture(R, G, B);
+    std::cout << "write_success: " << igl::png::writePNG(R, G, B, A, "H:/GIT/cgs-intrinsic-simplification/textures/object_texture.png") << std::endl;
   };
 
   const auto update_mesh_points = [&](Eigen::VectorXi& selected_indices, Eigen::MatrixXd& selected_constraints)
@@ -241,7 +270,7 @@ int main(int argc, char *argv[])
     viewer.data().clear();
     viewer.data().set_mesh(U,H);
     init_viewer_data();
-    update_texture();
+    // update_texture();
     update_points();
     viewer.draw();
   };
@@ -250,7 +279,7 @@ int main(int argc, char *argv[])
   auto refresh_mesh_vertices = [&](){
     viewer.data().set_vertices(U);
     init_viewer_data();
-    update_texture();
+    // update_texture();
     update_points();
     viewer.draw();
   };
@@ -367,9 +396,22 @@ int main(int argc, char *argv[])
         // TODO: later change .inputMesh to .intrinsicMesh
         r = rand() % iSData.inputMesh->nEdges();
         r = 1;
-        std::cout << "flip edge: " << r << std::endl;
-        flip_intrinsic(iSData, iSData.inputMesh->edge(r));
-        for (gcs::Face F : iSData.inputMesh->faces())
+        // for (gcs::Edge E : iSData.intrinsicMesh->edges())
+        while (true)
+        {
+          r = rand() % iSData.intrinsicMesh->nEdges();
+          gcs::Edge E = iSData.intrinsicMesh->edge(r);
+          int nk = 0;
+          for (gcs::Face F : E.adjacentFaces())
+          {
+            nk++;
+          }
+          if (nk == 2)
+          { r = E.getIndex(); break; }
+        }
+        std::cout << "flip edge: " << r << " => (" << iSData.intrinsicMesh->edge(r).firstVertex().getIndex() << ", " << iSData.intrinsicMesh->edge(r).secondVertex().getIndex() << ")"<< std::endl;
+        flip_intrinsic(iSData, iSData.intrinsicMesh->edge(r));
+        for (gcs::Face F : iSData.intrinsicMesh->faces())
         {
           Eigen::Vector3i ffface = Eigen::Vector3i();
           int j = 0;
@@ -385,8 +427,8 @@ int main(int argc, char *argv[])
         // TODO: figure out a way to store the mapping with varying mapping objects in a vector
         // ((std::unique_ptr<Edge_Flip>) iSData.mapping[0])->map_to_coarse(iSData.mapped_points, iSData.mapped_by_triangle);
         // iSData.mapping[0]->map_to_coarse(iSData.mapped_points, iSData.mapped_by_triangle);
-        map_registered(iSData);
-        refresh_mesh();
+        // map_registered(iSData);
+        // refresh_mesh();
         if (virgin) return true;
         // if (iSData.hasConverged) return true; // TODO: replace
         // step manually
@@ -434,57 +476,60 @@ int main(int argc, char *argv[])
         }
         return true;
       case 'W': case 'w':
-        // update texture
-        std::cout << "Updating texture: " << std::endl;
-        for (gcs::Face F : iSData.intrinsicMesh->faces())
-        {
-          std::cout << "-> texturing intrinsic face: " << F << std::endl;
-          for (gcs::Vertex V : F.adjacentVertices())
-          {
-            std::cout << "---> texturing intrinsic vertex: " << V << std::endl;
-            int v_idx = V.getIndex();
-            Eigen::Vector2d uv = UV.row(v_idx);
-            std::cout << "---> that maps to u: " << uv[0] << ", v: " << uv[1] << std::endl;
-            // int x = TEXTURE_WIDTH - (int) ((uv[0] + 1.0) / 2.0 * TEXTURE_WIDTH);
-            // int y = TEXTURE_HEIGHT - (int) ((uv[1] + 1.0) / 2.0 * TEXTURE_HEIGHT);
-            int x = (int) ((uv[0]) * TEXTURE_WIDTH);
-            int y = (int) ((uv[1]) * TEXTURE_HEIGHT);
-            if (x < 0) { x += TEXTURE_WIDTH; }
-            if (y < 0) { y += TEXTURE_HEIGHT; }
-            std::cout << "---> Calculated texture position of uv. x: " << x << ", y: " << y << std::endl;
-            G(x, y) = 0;
-          }
-        }
-        // G(22, 88) = 0;
-        // G(22, 12) = 0;
-        // G(43, 23) = 0;
-        for (int i=0; i<TEXTURE_WIDTH; i++)
-        {
-          for (int j=0; j<TEXTURE_HEIGHT; j++)
-          {
-            R(i, j) = (int) ((((double) i) * 255.0) / ((double) TEXTURE_WIDTH));
-            B(i, j) = (int) ((((double) j) * 255.0) / ((double) TEXTURE_HEIGHT));
-          }
-        }
+        // // update texture
+        // std::cout << "Updating texture: " << std::endl;
+        // for (gcs::Face F : iSData.intrinsicMesh->faces())
+        // {
+        //   std::cout << "-> texturing intrinsic face: " << F << std::endl;
+        //   for (gcs::Vertex V : F.adjacentVertices())
+        //   {
+        //     std::cout << "---> texturing intrinsic vertex: " << V << std::endl;
+        //     int v_idx = V.getIndex();
+        //     Eigen::Vector2d uv = UV.row(v_idx);
+        //     std::cout << "---> that maps to u: " << uv[0] << ", v: " << uv[1] << std::endl;
+        //     // int x = TEXTURE_WIDTH - (int) ((uv[0] + 1.0) / 2.0 * TEXTURE_WIDTH);
+        //     // int y = TEXTURE_HEIGHT - (int) ((uv[1] + 1.0) / 2.0 * TEXTURE_HEIGHT);
+        //     int x = (int) ((uv[0]) * TEXTURE_WIDTH);
+        //     int y = (int) ((uv[1]) * TEXTURE_HEIGHT);
+        //     // NOTE: negative checks not needed anymore, because we constrain uv's to be within the range [0, 1]
+        //     // if (x < 0) { x += TEXTURE_WIDTH; }
+        //     // if (y < 0) { y += TEXTURE_HEIGHT; }
+        //     std::cout << "---> Calculated texture position of uv. x: " << x << ", y: " << y << std::endl;
+        //     G(x, y) = 0;
+        //   }
+        // }
+        // // G(22, 88) = 0;
+        // // G(22, 12) = 0;
+        // // G(43, 23) = 0;
+        // for (int i=0; i<TEXTURE_WIDTH; i++)
+        // {
+        //   for (int j=0; j<TEXTURE_HEIGHT; j++)
+        //   {
+        //     R(i, j) = (int) ((((double) i) * 255.0) / ((double) TEXTURE_WIDTH));
+        //     B(i, j) = (int) ((((double) j) * 255.0) / ((double) TEXTURE_HEIGHT));
+        //   }
+        // }
         refresh_mesh();
         // igl::png::writePNG(R, G, B, A, "textures/object_texture.png");
-        std::cout << "write_success: " << igl::png::writePNG(R, G, B, A, "H:/GIT/cgs-intrinsic-simplification/textures/object_texture.png") << std::endl;
+        // std::cout << "write_success: " << igl::png::writePNG(R, G, B, A, "H:/GIT/cgs-intrinsic-simplification/textures/object_texture.png") << std::endl;
         return true;
       case 'E': case 'e':
         // Map registered points
         map_registered(iSData);
-        std::cout << "Mapped points:\n";
-        for(int i=0; i<iSData.mapped_by_triangle.size(); i++)
-        {
-          for(int j=0; j<iSData.mapped_by_triangle[i].size(); j++)
-          {
-            std::cout << to_str(iSData.tracked_points[j]) << " => " << to_str(iSData.mapped_points[j]) << std::endl;
-          }
-          if(iSData.mapped_by_triangle[i].size() > 0)
-          {
-            std::cout << " to triangle: " << i << std::endl;
-          }
-        }
+        std::cout << "Mapped points" << std::endl;
+        // std::cout << "Mapped points:\n";
+        // for(int i=0; i<iSData.mapped_by_triangle.size(); i++)
+        // {
+        //   for(int j=0; j<iSData.mapped_by_triangle[i].size(); j++)
+        //   {
+        //     std::cout << to_str(iSData.tracked_points[j]) << " => " << to_str(iSData.mapped_points[j]) << std::endl;
+        //   }
+        //   if(iSData.mapped_by_triangle[i].size() > 0)
+        //   {
+        //     std::cout << " to triangle: " << i << std::endl;
+        //   }
+        // }
+        update_texture();
         return true;
       case 'J': case 'j':
         simpMode = (simpMode == ISIMP_MODE::ON_INPUT) ? ISIMP_MODE::EACH_FRAME : ISIMP_MODE::ON_INPUT;
@@ -493,9 +538,9 @@ int main(int argc, char *argv[])
         (logFile).close();
         return true;
       case 'C': case 'c':
-        register_point(iSData, bp, 0);
-        std::cout << "Registered point barycentric point: (" << bp[0] << ", " << bp[1] << ", " << bp[2] << ") at ";
-        printGCSFace(iSData.inputMesh->face(0));
+        // register_point(iSData, bp, 0);
+        // std::cout << "Registered point barycentric point: (" << bp[0] << ", " << bp[1] << ", " << bp[2] << ") at ";
+        // printGCSFace(iSData.inputMesh->face(0));
       // TODO: we don't need constraints
       //   virgin = false;
       //   iSData.hasConverged = false;

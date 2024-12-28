@@ -1,10 +1,11 @@
 #include "isimp_utils.hpp"
 
-void register_point(iSimpData& iSData, const BarycentricPoint point, const int face_idx)
+void register_point(iSimpData& iSData, const BarycentricPoint point, const TexCoord texcoord, const int face_idx)
 {
   int point_idx = iSData.tracked_points.size();
   iSData.tracked_by_triangle[face_idx].push_back(point_idx);
   iSData.tracked_points.push_back(point);
+  iSData.tracked_texcoords.push_back(texcoord);
 }
 
 void map_registered(iSimpData& iSData)
@@ -54,8 +55,8 @@ bool flip_intrinsic(iSimpData& iSData, const gcs::Edge edge)
   // ------------------------------------------------------------------------^
   std::pair<int, int> Fk_unique = find_unique_vertex_index(Fk, edge);
   std::pair<int, int> Fl_unique = find_unique_vertex_index(Fl, edge);
-  std::cout << "Fk_unique_idx: " << Fk_unique.first << std::endl;
-  std::cout << "Fl_unique_idx: " << Fl_unique.first << std::endl;
+  std::cout << "Fk_unique_idx: " << Fk_unique.first << ", Fk_unique_vertex: " << Fk_unique.second << std::endl;
+  std::cout << "Fl_unique_idx: " << Fl_unique.first << ", Fl_unique_vertex: " << Fl_unique.second << std::endl;
   // get ordered intrinsic edge lengths from neighborhood
   std::array<int, 5> edge_indices = order_quad_edge_indices(edge, Fk_unique.second, Fl_unique.second);
   std::array<int, 4> vertex_indices = order_quad_vertex_indices(edge, Fk_unique.second, Fl_unique.second);
@@ -65,7 +66,7 @@ bool flip_intrinsic(iSimpData& iSData, const gcs::Edge edge)
   double l_jk = iSData.L(edge_indices[2]);
   double l_il = iSData.L(edge_indices[3]);
   double l_jl = iSData.L(edge_indices[4]);
-  std::cout << "lengths: l_ij: " << l_ij << ", l_ik: " << l_ik << ", l_jk: " << l_jk << ", l_il: " << l_il << ", l_jl: " << l_jl << std::endl;
+  // std::cout << "lengths: l_ij: " << l_ij << ", l_ik: " << l_ik << ", l_jk: " << l_jk << ", l_il: " << l_il << ", l_jl: " << l_jl << std::endl;
   Quad2D unfolded = unfold(l_ij, l_ik, l_jk, l_il, l_jl);
   std::cout << "Planar unfolding of edge lengths:\n";
   printEigenVector2d("v0", unfolded.row(0));
@@ -74,7 +75,6 @@ bool flip_intrinsic(iSimpData& iSData, const gcs::Edge edge)
   printEigenVector2d("v3", unfolded.row(3));
   std::cout << "ordered quad vertex indices: " << vertex_indices[0]  << vertex_indices[1]  << vertex_indices[2]  << vertex_indices[3] << std::endl;
 
-  iSData.inputMesh->flip(edge, false); // TODO: remove this line when done testing
   bool couldFlip = iSData.intrinsicMesh->flip(edge, false);
   if (!couldFlip) { return false; }
 
@@ -101,8 +101,8 @@ bool flip_intrinsic(iSimpData& iSData, const gcs::Edge edge)
   printGCSFace("New Fk", Fk);
   printGCSFace("New Fl", Fl);
 
-  std::cout << "Predicted Fk = {" << vertex_indices[2] << ", " << vertex_indices[3] << ", " << vertex_indices[1] << "}" << std::endl;
-  std::cout << "Predicted Fl = {" << vertex_indices[3] << ", " << vertex_indices[2] << ", " << vertex_indices[0] << "}" << std::endl;
+  // std::cout << "Predicted Fk = {" << vertex_indices[2] << ", " << vertex_indices[3] << ", " << vertex_indices[1] << "}" << std::endl;
+  // std::cout << "Predicted Fl = {" << vertex_indices[3] << ", " << vertex_indices[2] << ", " << vertex_indices[0] << "}" << std::endl;
   // ------------------------------------------------------------------------^
 
   return true;
