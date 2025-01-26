@@ -1,5 +1,7 @@
 #pragma once
 #include <igl/min_quad_with_fixed.h>
+#include <queue>
+#include <set>
 
 #include "geom_helpers.hpp"
 #include "gcs_defs.hpp"
@@ -7,6 +9,23 @@
 
 enum class SIMP_OP;
 class Mapping_operation;
+
+// Custom comparator
+// struct customLess
+// {
+//     bool operator()(const std::pair<double, int> l, const std::pair<double, int> r) const { return l.first > r.first; }
+// };
+struct customLess
+{
+    bool operator()(const std::shared_ptr<std::pair<int, double>> l, const std::shared_ptr<std::pair<int, double>> r) const {
+      if (l->second == r->second)
+      {
+        return l->first < r->first;
+      }
+      return l->second < r->second;
+    }
+};
+// auto cmp = [](std::pair<double, int> left, std::pair<double, int> right) { return left.first > right.first; };
 
 struct iSimpData {
   // input (original vertices & faces)
@@ -17,14 +36,25 @@ struct iSimpData {
   Eigen::Matrix<double, -1, 1> L;
 
   // intrinsic simplification quantities
-  Eigen::Matrix<double, -1, 2> Masses;
-  Eigen::Matrix<double, -1, 3> Err_Vecs; // TODO: check if error vectors are supposed to be 2d intrinic or 3d extrinsic
+  // Vertex masses (M_minus, M_plus)
+  Eigen::Matrix<double, -1, 2> M;
+  // Error vectors t_minus, t_plus for positive/negative curvature in polar form (first coordinate: normalized angle in [0, 1], second coordinate: vector length)
+  Eigen::Matrix<double, -1, 2> T_minus;
+  Eigen::Matrix<double, -1, 2> T_plus;
+  // std::priority_queue<std::pair<double, int>, std::vector<std::pair<double, int>>, customLess> Q;
+  // std::priority_queue<std::pair<double, int>, std::vector<std::pair<double, int>>, decltype(cmp)> Q;
+  // std::priority_queue<std::pair<double, int>, customLess> Q;
+  // NOTE: I needed to use std::set for the priority queue, because std::priority_queue only allows access to the highest priority element (And we also need to update others that are queued)
+  std::set<std::shared_ptr<std::pair<int, double>>, customLess> Q;
+  std::vector<std::pair<int, double>> Q_elems; // vertex index, intrinsic curvature error pairs used in the priority queue Q
 
   // geometries
-  // std::unique_ptr<gcs::ManifoldSurfaceMesh> inputMesh;
   std::unique_ptr<gcs::ManifoldSurfaceMesh> inputMesh;
   std::unique_ptr<gcs::VertexPositionGeometry> inputGeometry;
   std::unique_ptr<gcs::ManifoldSurfaceMesh> intrinsicMesh;
+
+  // edges that define the angle 0 of the tangent spaces, centered on a vertex
+  Eigen::Matrix<int, -1, 1> tangent_space_reference_edges;
 
   // bijective mapping consisting of a sequence of atomic mapping operations
   std::vector<std::unique_ptr<Mapping_operation>> mapping;
@@ -91,16 +121,21 @@ class Edge_Flip : public Mapping_operation {
       Fk_unique_v_idx = Fk_unique_v_idx_;
       Fl_unique_v_idx = Fl_unique_v_idx_;
       v0 = quad_.row(0); v1 = quad_.row(1); v2 = quad_.row(2); v3 = quad_.row(3);
-      printEigenMatrixXd("v0", v0);
-      printEigenMatrixXd("v1", v1);
-      printEigenMatrixXd("v2", v2);
-      printEigenMatrixXd("v3", v3);
+      // printEigenMatrixXd("v0", v0);
+      // printEigenMatrixXd("v1", v1);
+      // printEigenMatrixXd("v2", v2);
+      // printEigenMatrixXd("v3", v3);
 
       Vector2D P3P2 = v2 - v3;
       n = Normal2D(P3P2(1), -P3P2(0)).normalized();
       b = - n.dot(v2);
-      printEigenMatrixXd("n", n);
-      std::cout << "b: " << b << std::endl;
+      // printEigenMatrixXd("v2", v2);
+      // printEigenMatrixXd("v3", v3);
+      // printEigenMatrixXd("p3p2", P3P2);
+      // printEigenMatrixXd("n", n);
+      // std::cout << "b: " << b << std::endl;
+      // std::cout << "Fk_unique_idx = " << Fk_unique_v_idx;
+      // std::cout << ", Fl_unique_idx = " << Fl_unique_v_idx << std::endl;
     }
 
     bool lies_in_Fk(const Point2D& p) {
@@ -117,9 +152,9 @@ class Edge_Flip : public Mapping_operation {
       tracked_by_triangle[Fl_idx].clear();
 
       // TODO: remove prints
-      std::cout << "\n\nMapping to coarse!" << std::endl;
-      std::cout << "Fk_idx = " << Fk_idx;
-      std::cout << ", Fl_idx = " << Fl_idx << std::endl;
+      // std::cout << "\n\nMapping to coarse!" << std::endl;
+      // std::cout << "Fk_idx = " << Fk_idx;
+      // std::cout << ", Fl_idx = " << Fl_idx << std::endl;
       // std::cout << "Planar unfolding of edge lengths:\n";
       // printEigenVector2d("v0", v0);
       // printEigenVector2d("v1", v1);
@@ -149,40 +184,10 @@ class Edge_Flip : public Mapping_operation {
             // std::cout << "making explicit (012), barycentric point " << to_str(tracked_points[p_idx]) << " as convex combination of A: " << to_str(v0) << ", B: " << to_str(v1) << " and C: " << to_str(v2) << std::endl;
             p = to_explicit(tracked_points[p_idx], v0, v1, v2);
             break;
-
-          // case 0:
-          //   std::cout << "making explicit (210), barycentric point " << to_str(tracked_points[p_idx]) << " as convex combination of A: " << to_str(v2) << ", B: " << to_str(v1) << " and C: " << to_str(v0) << std::endl;
-          //   p = to_explicit(tracked_points[p_idx], v2, v1, v0);
-          //   break;
-          // case 1:
-          //   std::cout << "making explicit (021), barycentric point " << to_str(tracked_points[p_idx]) << " as convex combination of A: " << to_str(v0) << ", B: " << to_str(v2) << " and C: " << to_str(v1) << std::endl;
-          //   p = to_explicit(tracked_points[p_idx], v0, v2, v1);
-          //   break;
-          // default:
-          // case 2:
-          //   std::cout << "making explicit (102), barycentric point " << to_str(tracked_points[p_idx]) << " as convex combination of A: " << to_str(v1) << ", B: " << to_str(v0) << " and C: " << to_str(v2) << std::endl;
-          //   p = to_explicit(tracked_points[p_idx], v1, v0, v2);
-          //   break;
-
-          // TODODODODO: This seemed to work
-
-          // case 0:
-          //   std::cout << "making explicit (210), barycentric point " << to_str(tracked_points[p_idx]) << " as convex combination of A: " << to_str(v2) << ", B: " << to_str(v1) << " and C: " << to_str(v0) << std::endl;
-          //   p = to_explicit(tracked_points[p_idx], v2, v0, v1);
-          //   break;
-          // case 1:
-          //   std::cout << "making explicit (021), barycentric point " << to_str(tracked_points[p_idx]) << " as convex combination of A: " << to_str(v0) << ", B: " << to_str(v2) << " and C: " << to_str(v1) << std::endl;
-          //   p = to_explicit(tracked_points[p_idx], v1, v2, v0);
-          //   break;
-          // default:
-          // case 2:
-          //   std::cout << "making explicit (102), barycentric point " << to_str(tracked_points[p_idx]) << " as convex combination of A: " << to_str(v1) << ", B: " << to_str(v0) << " and C: " << to_str(v2) << std::endl;
-          //   p = to_explicit(tracked_points[p_idx], v1, v0, v2);
-          //   break;
         }
-        // if(tracked_points[p_idx][1] < tracked_points[p_idx][0]) {
-        //   std::cout << "explicit point p: " << to_str(p) << ", from barycentric: " << to_str(tracked_points[p_idx]) << std::endl;
-        // }
+        if(tracked_points[p_idx][1] < tracked_points[p_idx][0]) {
+          // std::cout << "explicit point p: " << to_str(p) << ", from barycentric: " << to_str(tracked_points[p_idx]) << std::endl;
+        }
         if (lies_in_Fk(p))
         {
           // std::cout << "p lies in Fk. Reexpressing p barycentrically: " << std::endl;
@@ -210,17 +215,6 @@ class Edge_Flip : public Mapping_operation {
           case 2:
             p = to_explicit(tracked_points[p_idx], v1, v0, v3);
             break;
-
-          // case 0:
-          //   p = to_explicit(tracked_points[p_idx], v3, v1, v0);
-          //   break;
-          // case 1:
-          //   p = to_explicit(tracked_points[p_idx], v0, v3, v1);
-          //   break;
-          // default:
-          // case 2:
-          //   p = to_explicit(tracked_points[p_idx], v3, v0, v1);
-          //   break;
         }
         if (lies_in_Fk(p))
         {
@@ -238,22 +232,19 @@ class Edge_Flip : public Mapping_operation {
 class Vertex_Flattening : public Mapping_operation {
   public:
     // mapping parameters
-    // TODO:
     // mapped faces
     std::vector<int> F_idxs;
-    // resulting face
-    int Fr_idx;
-    // removed vertex
-    int v_idx;
+    // indices of flattened vertex in mapped faces
+    std::vector<int> v_idxs;
+    // int v_idx;
     // scaling factor resulting from removal
-    double scaling;
+    double v_u;
 
-    Vertex_Flattening(const std::vector<int> F_idxs_, const int Fr_idx_, const int v_idx_, const double scaling_)
+    Vertex_Flattening(const std::vector<int> F_idxs_, const std::vector<int> v_idxs_, const double v_u_)
     {
       F_idxs = F_idxs_;
-      Fr_idx = Fr_idx_;
-      v_idx = v_idx_;
-      scaling = scaling_;
+      v_idxs = v_idxs_;
+      v_u = v_u_;
     }
 
     void map_to_coarse(std::vector<BarycentricPoint>& tracked_points, std::vector<std::vector<int>>& tracked_by_triangle)
@@ -261,9 +252,15 @@ class Vertex_Flattening : public Mapping_operation {
       for (int i=0; i<F_idxs.size(); i++)
       {
         int F_idx = F_idxs[i];
+        int F_v_idx = v_idxs[i];
         for (int j=0; j<tracked_by_triangle[F_idx].size(); j++)
         {
-          // TODO: scale correct barycentric coordinate and insert all datapoints into resulting face
+          // scale correct barycentric coordinate & renormalize
+          int p_idx = tracked_by_triangle[F_idx][j];
+          BarycentricPoint& bp = tracked_points[p_idx];
+          bp[F_v_idx] *= std::exp(v_u);
+          double norm = bp.sum();
+          bp /= norm;
         }
       }
     }
@@ -273,10 +270,143 @@ class Vertex_Flattening : public Mapping_operation {
 class Vertex_Removal : public Mapping_operation {
   public:
     // mapping parameters
-    // TODO:
-    int F1_idx;
+    std::vector<int> F_idxs;
+    int F_res_idx;
+    int F_res_permutation;
+
+    int F_jk_shared_v_idx;
+    int F_jl_shared_v_idx;
+    int F_kl_shared_v_idx;
+    Point2D vi, vj, vk, vl;
+
+
+    // Vertex_Removal(const std::vector<int> F_idxs_, const int F_res_idx_, const Quad2D quad_, const int F_jk_shared_v_idx_, const int F_jl_shared_v_idx_, const int F_kl_shared_v_idx_)
+    Vertex_Removal(const std::vector<int> F_idxs_, const int F_res_idx_, const Quad2D quad_, const std::vector<int> shared_idxs, const int F_res_permutation_)
+    {
+      op_type = SIMP_OP::V_REMOVAL;
+      F_idxs = F_idxs_;
+      F_res_idx = F_res_idx_;
+      F_res_permutation = F_res_permutation_;
+
+      // F_jk_shared_v_idx = F_jk_shared_v_idx_;
+      // F_jl_shared_v_idx = F_jl_shared_v_idx_;
+      // F_kl_shared_v_idx = F_kl_shared_v_idx_;
+      F_jk_shared_v_idx = shared_idxs[0];
+      F_jl_shared_v_idx = shared_idxs[1];
+      F_kl_shared_v_idx = shared_idxs[2];
+      vi = quad_.row(0); vj = quad_.row(1); vk = quad_.row(2); vl = quad_.row(3);
+    }
+
     void map_to_coarse(std::vector<BarycentricPoint>& tracked_points, std::vector<std::vector<int>>& tracked_by_triangle)
     {
+      // copy tracked_by_triangle index lists for Fk, Fl and clear them
+      std::vector<int> Fjk_points = tracked_by_triangle[F_idxs[0]];
+      std::vector<int> Fjl_points = tracked_by_triangle[F_idxs[1]];
+      std::vector<int> Fkl_points = tracked_by_triangle[F_idxs[2]];
+      tracked_by_triangle[F_idxs[0]].clear();
+      tracked_by_triangle[F_idxs[1]].clear();
+      tracked_by_triangle[F_idxs[2]].clear();
 
+      for (int p_idx : Fjk_points)
+      {
+        Point2D p;
+        // TODO: create table and replace this switch case with a single to_explicit call with table lookups
+        switch (F_jk_shared_v_idx)
+        {
+          default:
+          case 0:
+            p = to_explicit(tracked_points[p_idx], vi, vj, vk);
+            break;
+          case 1:
+            p = to_explicit(tracked_points[p_idx], vk, vi, vj);
+            break;
+          case 2:
+            p = to_explicit(tracked_points[p_idx], vj, vk, vi);
+            break;
+        }
+
+        switch(F_res_permutation)
+        {
+          default:
+          case 0:
+            tracked_points[p_idx] = to_barycentric(p, vj, vk, vl);
+            break;
+          case 1:
+            tracked_points[p_idx] = to_barycentric(p, vl, vj, vk);
+            break;
+          case 2:
+            tracked_points[p_idx] = to_barycentric(p, vk, vl, vj);
+            break;
+        }
+        tracked_by_triangle[F_res_idx].push_back(p_idx);
+      }
+
+      for (int p_idx : Fjl_points)
+      {
+        Point2D p;
+        // TODO: create table and replace this switch case with a single to_explicit call with table lookups
+        switch (F_jl_shared_v_idx)
+        {
+          default:
+          case 0:
+            p = to_explicit(tracked_points[p_idx], vi, vl, vj);
+            break;
+          case 1:
+            p = to_explicit(tracked_points[p_idx], vj, vi, vl);
+            break;
+          case 2:
+            p = to_explicit(tracked_points[p_idx], vl, vj, vi);
+            break;
+        }
+
+        switch(F_res_permutation)
+        {
+          default:
+          case 0:
+            tracked_points[p_idx] = to_barycentric(p, vj, vk, vl);
+            break;
+          case 1:
+            tracked_points[p_idx] = to_barycentric(p, vl, vj, vk);
+            break;
+          case 2:
+            tracked_points[p_idx] = to_barycentric(p, vk, vl, vj);
+            break;
+        }
+        tracked_by_triangle[F_res_idx].push_back(p_idx);
+      }
+
+      for (int p_idx : Fkl_points)
+      {
+        Point2D p;
+        // TODO: create table and replace this switch case with a single to_explicit call with table lookups
+        switch (F_kl_shared_v_idx)
+        {
+          default:
+          case 0:
+            p = to_explicit(tracked_points[p_idx], vi, vk, vl);
+            break;
+          case 1:
+            p = to_explicit(tracked_points[p_idx], vl, vi, vk);
+            break;
+          case 2:
+            p = to_explicit(tracked_points[p_idx], vk, vl, vi);
+            break;
+        }
+
+        switch(F_res_permutation)
+        {
+          default:
+          case 0:
+            tracked_points[p_idx] = to_barycentric(p, vj, vk, vl);
+            break;
+          case 1:
+            tracked_points[p_idx] = to_barycentric(p, vl, vj, vk);
+            break;
+          case 2:
+            tracked_points[p_idx] = to_barycentric(p, vk, vl, vj);
+            break;
+        }
+        tracked_by_triangle[F_res_idx].push_back(p_idx);
+      }
     }
 };

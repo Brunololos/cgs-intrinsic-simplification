@@ -14,12 +14,21 @@ typedef Eigen::SparseVector<double>::InnerIterator SVIter;
 void initMesh(const Eigen::Matrix<double, -1, 3>& V, const Eigen::Matrix<int, -1, 3>& F, iSimpData& data){
   data.V = V;
   data.F = F;
+  data.M = Eigen::MatrixXd::Zero(V.rows(), 2);
+  data.T_minus = Eigen::MatrixXd::Zero(V.rows(), 2);
+  data.T_plus = Eigen::MatrixXd::Zero(V.rows(), 2);
+  // data.Q = std::priority_queue<std::pair<double, int>, std::vector<std::pair<double, int>>, decltype(cmp)>(cmp);
+  // data.Q = std::priority_queue<std::pair<double, int>, decltype(cmp)>(cmp);
+  // data.Q = std::priority_queue<std::pair<double, int>, customLess>();
+  data.Q = std::set<std::shared_ptr<std::pair<int, double>>, customLess>();
+  data.Q_elems = std::vector<std::pair<int, double>>(V.rows());
 
   data.inputMesh.reset(new gcs::ManifoldSurfaceMesh(F));
   data.inputGeometry.reset(new gcs::VertexPositionGeometry(*data.inputMesh, V));
 
   // initialize intrinsic connectivity
   data.intrinsicMesh.reset(new gcs::ManifoldSurfaceMesh(F));
+  data.tangent_space_reference_edges = Eigen::MatrixXi::Zero(V.rows(), 1);
 
   // initialize intrinsic edge lengths
   int nEdges = data.inputMesh->nEdges();
@@ -31,6 +40,43 @@ void initMesh(const Eigen::Matrix<double, -1, 3>& V, const Eigen::Matrix<int, -1
     data.L(e.getIndex()) = data.inputGeometry->edgeLength(e);
     // /* TODO: remove */ std::cout << "edge(" << e.firstVertex().getIndex() << ", " << e.secondVertex().getIndex() << ") L(" << i << ") = " << data.L(i) << std::endl;
     i++;
+  }
+
+  // init masses & error vectors
+  for (gcs::Vertex v : data.inputMesh->vertices())
+  {
+    // calculate curvature
+    double curvature = gaussian_curvature(data, v);
+    double K_minus = - std::min(curvature, 0.0);
+    double K_plus = std::max(curvature, 0.0);
+    data.M.row(v.getIndex()) = Eigen::Vector2d(K_minus, K_plus);
+
+    for (gcs::Edge e : v.adjacentEdges())
+    {
+      data.tangent_space_reference_edges(v.getIndex(), 0) = e.getIndex();
+      break;
+    }
+  }
+
+  // insert vertices with intrinsic curvature error into priority queue
+  // for (int i = 0; i < data.intrinsicMesh->nVertices(); i++) // NOTE: we don't iterate over data.intrinsicMesh->vertices(), because we want to ensure the indices in Q_elems are ordered.
+  for (gcs::Vertex v : data.intrinsicMesh->vertices())
+  {
+    double ice = intrinsic_curvature_error(data, v);
+    std::cout << "i: " << v.getIndex() << " ice: " << ice << std::endl;
+    std::pair<int, double> v_elem = std::pair<int, double>(v.getIndex(), ice);
+    data.Q_elems[v.getIndex()] = v_elem;
+    data.Q.insert(std::make_shared<std::pair<int, double>>(v_elem));
+  }
+  // TODO: remove prints
+  // while (!data.Q.empty())
+  // {
+  //   std::cout << data.Q.begin()->get()->first << ", " << data.Q.begin()->get()->second << std::endl;
+  //   data.Q.erase(data.Q.begin());
+  // }
+  for (auto item : data.Q)
+  {
+    std::cout << item->first << ", " << item->second << std::endl;
   }
 
   data.mapping = std::vector<std::unique_ptr<Mapping_operation>>();
