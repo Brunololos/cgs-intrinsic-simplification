@@ -10,11 +10,6 @@
 enum class SIMP_OP;
 class Mapping_operation;
 
-// Custom comparator
-// struct customLess
-// {
-//     bool operator()(const std::pair<double, int> l, const std::pair<double, int> r) const { return l.first > r.first; }
-// };
 struct customLess
 {
     bool operator()(const std::shared_ptr<std::pair<int, double>> l, const std::shared_ptr<std::pair<int, double>> r) const {
@@ -25,7 +20,6 @@ struct customLess
       return l->second < r->second;
     }
 };
-// auto cmp = [](std::pair<double, int> left, std::pair<double, int> right) { return left.first > right.first; };
 
 struct iSimpData {
   // input (original vertices & faces)
@@ -41,9 +35,6 @@ struct iSimpData {
   // Error vectors t_minus, t_plus for positive/negative curvature in polar form (first coordinate: normalized angle in [0, 1], second coordinate: vector length)
   Eigen::Matrix<double, -1, 2> T_minus;
   Eigen::Matrix<double, -1, 2> T_plus;
-  // std::priority_queue<std::pair<double, int>, std::vector<std::pair<double, int>>, customLess> Q;
-  // std::priority_queue<std::pair<double, int>, std::vector<std::pair<double, int>>, decltype(cmp)> Q;
-  // std::priority_queue<std::pair<double, int>, customLess> Q;
   // NOTE: I needed to use std::set for the priority queue, because std::priority_queue only allows access to the highest priority element (And we also need to update others that are queued)
   std::set<std::shared_ptr<std::pair<int, double>>, customLess> Q;
   std::vector<std::pair<int, double>> Q_elems; // vertex index, intrinsic curvature error pairs used in the priority queue Q
@@ -70,6 +61,7 @@ struct iSimpData {
   // the index of the outer vector denotes to which triangle the inner list of barycentric point indices belongs to
   std::vector<std::vector<int>> tracked_by_triangle;
   std::vector<std::vector<int>> mapped_by_triangle;
+  bool hasConverged;
 };
 
 // types of simplification operations

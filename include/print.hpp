@@ -28,6 +28,7 @@ void printTinyAD9Matrix(std::string name, Eigen::Matrix<ADDouble9, Eigen::Dynami
 void printEigenVector3d(std::string name, Eigen::Vector3d p);
 void printEigenVector2d(std::string name, Eigen::Vector2d p);
 void printEigenVector3d(Eigen::Vector3d p);
+void printEigenVector3i(Eigen::Vector3i p);
 void printEigenVector2d(Eigen::Vector2d p);
 
 void printGCSFace(gcs::Face f);

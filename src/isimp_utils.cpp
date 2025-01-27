@@ -15,18 +15,6 @@ void map_registered(iSimpData& iSData)
 
   for(int i=0; i<iSData.mapping.size(); i++)
   {
-    // Mapping_operation op = iSData.mapping[i];
-    // Edge_Flip ef;
-    // Vertex_Flattening vf;
-    // Vertex_Removal vr;
-    // switch(iSData.mapping[i].op_type)
-    // {
-    //   default:
-    //   case SIMP_OP::E_FLIP:
-    //     Edge_Flip ef = iSData.mapping[i];
-    //     break;
-    // }
-    // op.map_to_coarse(iSData.mapped_points, iSData.mapped_by_triangle);
     iSData.mapping[i]->map_to_coarse(iSData.mapped_points, iSData.mapped_by_triangle);
   }
 }
@@ -54,7 +42,7 @@ bool is_edge_flippable(const iSimpData& iSData, const Quad2D& quad, const gcs::E
   // check if quad is convex
   if (!is_convex(quad))
   {
-    std::cout << "Quad is nonconvex" << std::endl;
+    // std::cout << "Quad is nonconvex" << std::endl;
     return false;
   }
   return true;
@@ -62,7 +50,6 @@ bool is_edge_flippable(const iSimpData& iSData, const Quad2D& quad, const gcs::E
 
 bool flip_intrinsic(iSimpData& iSData, const gcs::Edge edge)
 {
-  // -------------------------------------------------------------v
   gcs::Face Fk;
   gcs::Face Fl;
   bool t = true;
@@ -77,31 +64,18 @@ bool flip_intrinsic(iSimpData& iSData, const gcs::Edge edge)
       Fl = F;
     }
   }
-  std::cout << "Flipping edge: " << edge.getIndex() << " with incident faces Fk: " << Fk.getIndex() << ", Fl: " << Fl.getIndex() << std::endl;
-  printGCSFace("Fk", Fk);
-  printGCSFace("Fl", Fl);
-  // ------------------------------------------------------------------------^
+
   std::pair<int, int> Fk_unique = find_unique_vertex_index(Fk, edge);
   std::pair<int, int> Fl_unique = find_unique_vertex_index(Fl, edge);
-  // std::cout << "Fk_unique_idx: " << Fk_unique.first << ", Fk_unique_vertex: " << Fk_unique.second << std::endl;
-  // std::cout << "Fl_unique_idx: " << Fl_unique.first << ", Fl_unique_vertex: " << Fl_unique.second << std::endl;
   // get ordered intrinsic edge lengths from neighborhood
   std::array<int, 5> edge_indices = order_quad_edge_indices(edge, Fk_unique.second, Fl_unique.second);
   std::array<int, 4> vertex_indices = order_quad_vertex_indices(edge, Fk_unique.second, Fl_unique.second);
-  // std::cout << "ordered quad edge indices: " << edge_indices[0]  << edge_indices[1]  << edge_indices[2]  << edge_indices[3]  << edge_indices[4] << std::endl;
   double l_ij = iSData.L(edge_indices[0]);
   double l_ik = iSData.L(edge_indices[1]);
   double l_jk = iSData.L(edge_indices[2]);
   double l_il = iSData.L(edge_indices[3]);
   double l_jl = iSData.L(edge_indices[4]);
-  std::cout << "lengths: l_ij: " << l_ij << ", l_ik: " << l_ik << ", l_jk: " << l_jk << ", l_il: " << l_il << ", l_jl: " << l_jl << std::endl;
   Quad2D unfolded = unfold(l_ij, l_ik, l_jk, l_il, l_jl);
-  // std::cout << "Planar unfolding of edge lengths:\n";
-  // printEigenVector2d("v0", unfolded.row(0));
-  // printEigenVector2d("v1", unfolded.row(1));
-  // printEigenVector2d("v2", unfolded.row(2));
-  // printEigenVector2d("v3", unfolded.row(3));
-  // std::cout << "ordered quad vertex indices: " << vertex_indices[0]  << vertex_indices[1]  << vertex_indices[2]  << vertex_indices[3] << std::endl;
 
   if (!is_edge_flippable(iSData, unfolded, edge)) { return false; }
   // update tangent space reference edges that would be flipped
@@ -111,32 +85,9 @@ bool flip_intrinsic(iSimpData& iSData, const gcs::Edge edge)
   if (!couldFlip) { return false; }
 
   // update edge length
-  iSData.L(edge.getIndex()) = flipped_edgelength(unfolded); // TODO: check if flipping messes with the edge index
-  // std::cout << "(flip_intrinsic) Edge " << edge.getIndex() << " length: " << iSData.L[edge.getIndex()] << std::endl;
+  iSData.L(edge.getIndex()) = flipped_edgelength(unfolded);
   // add intrinsic flip into mapping queue
   iSData.mapping.push_back(std::make_unique<Edge_Flip>(Fk.getIndex(), Fl.getIndex(), unfolded, Fk_unique.first, Fl_unique.first));
-
-  // -------------------------------------------------------------v
-  // t = true;
-  // for (gcs::Face F : edge.adjacentFaces())
-  // {
-  //   if (t)
-  //   {
-  //     Fk = F;
-  //     t = false;
-  //   }
-  //   else {
-  //     Fl = F;
-  //   }
-  // }
-  // printGCSFace("New Fk", Fk);
-  // printGCSFace("New Fl", Fl);
-  printGCSFace("New Fk", iSData.intrinsicMesh->face(Fk.getIndex()));
-  printGCSFace("New Fl", iSData.intrinsicMesh->face(Fl.getIndex()));
-
-  std::cout << "Predicted Fk = {" << vertex_indices[2] << ", " << vertex_indices[3] << ", " << vertex_indices[1] << "}" << std::endl;
-  std::cout << "Predicted Fl = {" << vertex_indices[3] << ", " << vertex_indices[2] << ", " << vertex_indices[0] << "}" << std::endl;
-  // ------------------------------------------------------------------------^
 
   return true;
 }
@@ -150,17 +101,12 @@ bool flatten_vertex(iSimpData& iSData, const int vertex_idx)
   double THETA_HAT = (!v.isBoundary()) ? 2.0 * M_PI : M_PI;
   double u_i = 0.0;
 
-  // std::cout << "Flattening vertex: " << vertex_idx << std::endl;
-  // std::cout << "Getting edge-lengths: " << std::endl;
-
   // TODO: if vertex is boundary vertex, check if it is incident on a boundary self-edge, or is a vertex of a self-face. If it is, it is skipped and flattening fails.
   std::unordered_map<int, double> L_opt = std::unordered_map<int, double>();
   for (gcs::Edge E : v.adjacentEdges())
   {
-    // std::cout << " L_Opt setup loop..." << std::endl;
     int idx = E.getIndex();
     L_opt.insert({idx, iSData.L[idx]});
-    // std::cout << "  (" << idx << ": (" << E.firstVertex().getIndex() << ", " << E.secondVertex().getIndex() << ")" << ", " << iSData.L[idx] << ")" << std::endl;
   }
 
   double step = 1000.0;
@@ -178,8 +124,11 @@ bool flatten_vertex(iSimpData& iSData, const int vertex_idx)
       double l_ik = L_opt[edge_indices[1]];
       double l_jk = iSData.L[edge_indices[2]];
 
+      if (l_jk < 0.0000000001) { std::cout << "flatten_vertex: Calling angle_i with zero length" << std::endl; }
       enumerator -= angle_i_from_lengths(l_ij, l_ik, l_jk);
+      if (l_ij < 0.0000000001) { std::cout << "flatten_vertex: Calling angle_i with zero length" << std::endl; }
       double theta_ij = angle_i_from_lengths(l_ik, l_jk, l_ij);
+      if (l_ik < 0.0000000001) { std::cout << "flatten_vertex: Calling angle_i with zero length" << std::endl; }
       double theta_ik = angle_i_from_lengths(l_ij, l_jk, l_ik);
       denominator += 1.0/std::tan(theta_ij);
       denominator += 1.0/std::tan(theta_ik);
@@ -191,17 +140,12 @@ bool flatten_vertex(iSimpData& iSData, const int vertex_idx)
 
     // safety check for NaN
     if (u_i != u_i) { std::cout << dye("Encountered NaN!", RED) << std::endl; return false; }
-    // std::cout << "  Newton iteration: " << i << " with |step| = " << std::abs(step) << " > " << threshold << std::endl;
-    // std::cout << "  Enumerator = " << enumerator << std::endl;
-    // std::cout << "  Denominator = " << denominator << std::endl;
-    std::cout << "  u_i = " << u_i << std::endl;
-    // TODO: update edge lengths in L_opt with u_i as a parameter
-    std::cout << "updating edge-lengths by " << std::exp(u_i / 2.0) << ": " << std::endl;
+    // update edge lengths in L_opt with u_i as a parameter
     for (const auto& pair : L_opt)
     {
       L_opt[pair.first] = std::exp(u_i / 2.0) * iSData.L[pair.first];
       gcs::Edge E = iSData.intrinsicMesh->edge(pair.first);
-      std::cout << "  (" << pair.first << ": (" << E.firstVertex().getIndex() << ", " << E.secondVertex().getIndex() << ")" << ", " << L_opt[pair.first] << ")" << std::endl;
+      // std::cout << "  (" << pair.first << ": (" << E.firstVertex().getIndex() << ", " << E.secondVertex().getIndex() << ")" << ", " << L_opt[pair.first] << ")" << std::endl;
     }
     i++;
   }
@@ -240,7 +184,6 @@ bool flatten_vertex(iSimpData& iSData, const int vertex_idx)
   // add vertex flattening operation into mapping queue
   for (const auto& pair : L_opt)
   {
-    // std::cout << "Setting: " << iSData.L[pair.first] << " => " << pair.second << std::endl;
     iSData.L[pair.first] = pair.second;
   }
   std::vector<int> faces = std::vector<int>();
@@ -272,28 +215,15 @@ bool flatten_vertex(iSimpData& iSData, const int vertex_idx)
   }
 
   // redistribute mass & update error vectors
-  // PolarVector2D T_minus = iSData.T_minus.row(vertex_idx);
-  // PolarVector2D T_plus = iSData.T_plus.row(vertex_idx);
   for (gcs::Vertex neighbor : v.adjacentVertices())
   {
     int neighbor_idx = neighbor.getIndex();
     double alpha = redistribution_weights[neighbor_idx];
     iSData.T_minus.row(neighbor_idx) = next_error_vector(iSData, alpha, v, neighbor, true);
     iSData.T_minus.row(neighbor_idx) = next_error_vector(iSData, alpha, v, neighbor, false);
-    // double mi_minus = alpha * iSData.M(vertex_idx, 0);
-    // double mi_plus = alpha * iSData.M(vertex_idx, 1);
-    // double mj_minus = iSData.M(neighbor_idx, 0);
-    // double mj_plus = iSData.M(neighbor_idx, 1);
 
     iSData.M(neighbor_idx, 0) += alpha * iSData.M(vertex_idx, 0);
     iSData.M(neighbor_idx, 1) += alpha * iSData.M(vertex_idx, 1);
-
-    // gcs::Edge connection = iSData.intrinsicMesh->connectingEdge(v, neighbor);
-    // Vector2D transported_T_minus = to_cartesian(parallel_transport(iSData, T_minus, v, neighbor));
-    // Vector2D transported_T_plus = to_cartesian(parallel_transport(iSData, T_plus, v, neighbor));
-    // Vector2D transport = to_cartesian(Vector2D({find_tangent_space_angle(iSData, connection, neighbor), iSData.L[connection.getIndex()]}));
-    // iSData.T_minus.row(neighbor_idx) = to_polar((alpha * mi_minus * (transported_T_minus + transport) + mj_minus * to_cartesian(iSData.T_minus.row(neighbor_idx))) / (alpha * mi_minus + mj_minus));
-    // iSData.T_plus.row(neighbor_idx) = to_polar((alpha * mi_plus * (transported_T_plus + transport) + mj_plus * to_cartesian(iSData.T_plus.row(neighbor_idx))) / (alpha * mi_plus + mj_plus));
   }
   // clear flattened vertices values
   iSData.T_minus.row(vertex_idx) = PolarVector2D::Zero();
@@ -308,23 +238,6 @@ bool remove_vertex(iSimpData& iSData, const int vertex_idx)
       // check if vertex is intrinsically flat (we can only remove it, when it is)
       gcs::Vertex vertex = iSData.intrinsicMesh->vertex(vertex_idx);
       double THETA_HAT = (!vertex.isBoundary()) ? 2.0 * M_PI : M_PI;
-
-      // std::cout << "got vertex!" << std::endl;
-      // std::cout << vertex << std::endl;
-      // std::cout << vertex.isDead() << std::endl;
-      // compute angle sum (NOTE: this sometimes has numerical accuracy problems)
-      // double angle_sum = 0.0;
-      // for (gcs::Face F : vertex.adjacentFaces())
-      // {
-      //   // get edge lengths
-      //   std::array<int, 3> edge_indices = order_triangle_edge_indices(F, vertex_idx);
-      //   double l_ij = iSData.L[edge_indices[0]];
-      //   double l_ik = iSData.L[edge_indices[1]];
-      //   double l_jk = iSData.L[edge_indices[2]];
-      //   angle_sum += angle_i_from_lengths(l_ij, l_ik, l_jk);
-      // }
-      // std::cout << "Computed Angle sum" << std::endl;
-
       if (vertex.isDead())
       {
         std::cout << "Vertex has already been removed from mesh." << std::endl;
@@ -336,7 +249,6 @@ bool remove_vertex(iSimpData& iSData, const int vertex_idx)
       //   std::cout << "Vertex has insufficient degree for removal." << std::endl;
       //   return false;
       // }
-      // std::cout << "Checked degree" << std::endl;
 
       // NOTE: gcs::manifold_surface_mesh implementation does not allow boundary vertex removal
       if (vertex.isBoundary())
@@ -386,41 +298,21 @@ bool remove_vertex(iSimpData& iSData, const int vertex_idx)
       // std::cout << "Determined F_jk: " << F_jk << ", F_jl: " << F_jl << std::endl;
 
       int i = 0;
-      // gcs::Edge e_ij;
-      // // for (gcs::Edge E : vertex.adjacentEdges())
-      // // {
-      // //   std::cout << "Checking edge: " << E << std::endl;
-      // //   // if(E.firstVertex().getIndex() == vertex_idx)
-      // //   // {
-      // //   i = 0;
-      // //   for (gcs::Face F : E.adjacentFaces())
-      // //   {
-      // //     std::cout << i << ": ";
-      // //     printGCSFace(F);
-      // //     // TODO: maybe this condition is too loose
-      // //     std::cout << "iter: " << i << ", F_jk: " << F_jk << ", F_jl: " << F_jl << std::endl;
-      // //     if (i == 0 && F.getIndex() != F_jk) { break; }
-      // //     if (i == 0) { i++; continue; }
-      // //     if (i == 1 && F.getIndex() != F_jl) { break; }
-      // //     e_ij = E;
-      // //   }
-      // //   // }
-      // // }
-      printGCSFace(iSData.intrinsicMesh->face(F_jk));
-      printGCSFace(iSData.intrinsicMesh->face(F_jl));
-      std::cout << "Determined e_ij: " << e_ij.getIndex() << " (" << e_ij.firstVertex().getIndex() << "," << e_ij.secondVertex().getIndex() << ")" << std::endl;
-      std::cout << "AdjacentFaces: " << std::endl;
-      for (gcs::Face F : vertex.adjacentFaces())
-      {
-        printGCSFace(F);
-      }
+      // printGCSFace(iSData.intrinsicMesh->face(F_jk));
+      // printGCSFace(iSData.intrinsicMesh->face(F_jl));
+      // std::cout << "Determined e_ij: " << e_ij.getIndex() << " (" << e_ij.firstVertex().getIndex() << "," << e_ij.secondVertex().getIndex() << ")" << std::endl;
+      // std::cout << "AdjacentFaces: " << std::endl;
+      // for (gcs::Face F : vertex.adjacentFaces())
+      // {
+      //   printGCSFace(F);
+      // }
       i = 0;
 
       std::pair<int, int> Fk_unique = find_unique_vertex_index(iSData.intrinsicMesh->face(F_jk), e_ij);
       std::pair<int, int> Fl_unique = find_unique_vertex_index(iSData.intrinsicMesh->face(F_jl), e_ij);
-      std::cout << "Determined unique_v's" << std::endl;
-      std::cout << "Fk_unique: " << Fk_unique.second << std::endl;
-      std::cout << "Fl_unique: " << Fl_unique.second << std::endl;
+      // std::cout << "Determined unique_v's" << std::endl;
+      // std::cout << "Fk_unique: " << Fk_unique.second << std::endl;
+      // std::cout << "Fl_unique: " << Fl_unique.second << std::endl;
       // get ordered intrinsic edge lengths from neighborhood
       std::array<int, 5> edge_indices = order_quad_edge_indices(e_ij, Fk_unique.second, Fl_unique.second, vertex_idx);
       double l_ij = iSData.L(edge_indices[0]);
@@ -429,7 +321,7 @@ bool remove_vertex(iSimpData& iSData, const int vertex_idx)
       double l_il = iSData.L(edge_indices[3]);
       double l_jl = iSData.L(edge_indices[4]);
       Quad2D unfolded = unfold(l_ij, l_ik, l_jk, l_il, l_jl);
-      std::cout << "Determined unfolding" << std::endl;
+      // std::cout << "Determined unfolding" << std::endl;
 
       // determining at which position in each face the shared vertex resides
       std::vector<int> shared_face_vertex_indices = std::vector<int>();
@@ -439,49 +331,14 @@ bool remove_vertex(iSimpData& iSData, const int vertex_idx)
 
       int F_jl_shared = find_vertex_face_index(iSData.intrinsicMesh->face(F_jl), vertex_idx);
       shared_face_vertex_indices.push_back(F_jl_shared);
-      // for (gcs::Face F : vertex.adjacentFaces())
-      // {
-      //   // std::cout << "f" << F.getIndex() << ", ";
-      //   if(F.getIndex() != F_jk && F.getIndex() != F_jl)
-      //   {
-      //     int shr_idx = find_vertex_face_index(F, vertex_idx);
-      //     shared_face_vertex_indices.push_back(shr_idx);
-      //   }
-      // }
       int F_kl_shared = find_vertex_face_index(iSData.intrinsicMesh->face(F_kl), vertex_idx);
       shared_face_vertex_indices.push_back(F_kl_shared);
-      // std::cout << "}" << std::endl;
 
       // collect adjacent vertices
       std::vector<int> F_idxs = std::vector<int>();
       F_idxs.push_back(F_jk);
       F_idxs.push_back(F_jl);
       F_idxs.push_back(F_kl);
-      // for (gcs::Face F : vertex.adjacentFaces())
-      // {
-      //   if(F.getIndex() != F_jk && F.getIndex() != F_jl) { F_idxs.push_back(F.getIndex()); break; }
-      // }
-
-      // std::cout << " faces pre-removal: {\n";
-      // for (gcs::Face F : iSData.intrinsicMesh->faces())
-      // {
-      //   printGCSFace(F);
-      //   std::cout << ", ";
-      // }
-      // std::cout << "}" << std::endl;
-
-      for (gcs::Vertex V : iSData.intrinsicMesh->vertex(vertex_idx).adjacentVertices())
-      {
-        // std::cout << "first vertex: " << V.getIndex() << std::endl;
-        break;
-      }
-
-      std::cout << "Vertex neighbors: ";
-      for (gcs::Vertex V : iSData.intrinsicMesh->vertex(vertex_idx).adjacentVertices())
-      {
-        std::cout << V.getIndex() << ", ";
-      }
-      std::cout << std::endl;
       std::array<int, 4> ordered_verts = order_quad_vertex_indices(e_ij, Fk_unique.second, Fl_unique.second, vertex_idx);
 
       // update reference edges for tangent spaces, if they are removed due to vertex removal
@@ -495,90 +352,66 @@ bool remove_vertex(iSimpData& iSData, const int vertex_idx)
 
       // remove vertex from intrinsicMesh
       iSData.intrinsicMesh->removeVertex(vertex);
-
-      // std::cout << "New face_idx prediction: f" << F_res << std::endl;
-      // std::cout << " faces post-removal: {\n";
-      // for (gcs::Face F : iSData.intrinsicMesh->faces())
-      // {
-      //   printGCSFace(F);
-      //   std::cout << ", ";
-      // }
-      // std::cout << "}" << std::endl;
-
-      // std::cout << "New vertex adjacent faces:\n";
-      // for (int v_idx : F_idxs)
-      // {
-      //   gcs::Vertex V = iSData.intrinsicMesh->vertex(v_idx);
-      //   std::cout << "Vertex v" << V.getIndex() << " faces: {";
-      //   for (gcs::Face F : V.adjacentFaces())
-      //   {
-      //     std::cout << "f" << F.getIndex() << ", ";
-      //   }
-      //   std::cout << "}" << std::endl;
-      // }
-      // printEigenVector2d("unfolded vk: ", unfolded.row(1));
-      // printEigenVector2d("unfolded vj: ", unfolded.row(2));
-      // printEigenVector2d("unfolded vl: ", unfolded.row(3));
       F_res_permutation = (find_vertex_face_index(iSData.intrinsicMesh->face(F_res), vertex_idx) + 1 % 3);
 
-      std::cout << "predicted F_res: " << std::endl;
-      switch (F_res_permutation)
-      {
-          default:
-          case 0:
-            std::cout << "vj, vk, vl: (" << ordered_verts[1] << ", " << ordered_verts[2] << ", " << ordered_verts[3] << ")" << std::endl;
-            break;
-          case 1:
-            std::cout << "vl, vj, vk: (" << ordered_verts[3] << ", " << ordered_verts[1] << ", " << ordered_verts[2] << ")" << std::endl;
-            break;
-          case 2:
-            std::cout << "vk, vl, vj: (" << ordered_verts[2] << ", " << ordered_verts[3] << ", " << ordered_verts[1] << ")" << std::endl;
-            break;
-      }
-      std::cout << "Face after removal: " << std::endl;
-      printGCSFace(iSData.intrinsicMesh->face(F_res));
-      std::cout << "F_jk: ";
-      switch (F_jk_shared)
-      {
-          default:
-          case 0:
-            std::cout << "vi, vj, vk: (" << ordered_verts[0] << ", " << ordered_verts[1] << ", " << ordered_verts[2] << ")" << std::endl;
-            break;
-          case 1:
-            std::cout << "vk, vi, vj: (" << ordered_verts[2] << ", " << ordered_verts[0] << ", " << ordered_verts[1] << ")" << std::endl;
-            break;
-          case 2:
-            std::cout << "vj, vk, vi: (" << ordered_verts[1] << ", " << ordered_verts[2] << ", " << ordered_verts[0] << ")" << std::endl;
-            break;
-      }
-      std::cout << "F_jl: ";
-      switch (F_jl_shared)
-      {
-          default:
-          case 0:
-            std::cout << "vi, vl, vj: (" << ordered_verts[0] << ", " << ordered_verts[3] << ", " << ordered_verts[1] << ")" << std::endl;
-            break;
-          case 1:
-            std::cout << "vj, vi, vl: (" << ordered_verts[1] << ", " << ordered_verts[0] << ", " << ordered_verts[3] << ")" << std::endl;
-            break;
-          case 2:
-            std::cout << "vl, vj, vi: (" << ordered_verts[3] << ", " << ordered_verts[1] << ", " << ordered_verts[0] << ")" << std::endl;
-            break;
-      }
-      std::cout << "F_kl: ";
-      switch (F_kl_shared)
-      {
-          default:
-          case 0:
-            std::cout << "vi, vk, vl: (" << ordered_verts[0] << ", " << ordered_verts[2] << ", " << ordered_verts[3] << ")" << std::endl;
-            break;
-          case 1:
-            std::cout << "vl, vi, vk: (" << ordered_verts[3] << ", " << ordered_verts[0] << ", " << ordered_verts[2] << ")" << std::endl;
-            break;
-          case 2:
-            std::cout << "vk, vl, vi: (" << ordered_verts[2] << ", " << ordered_verts[3] << ", " << ordered_verts[0] << ")" << std::endl;
-            break;
-      }
+      // std::cout << "predicted F_res: " << std::endl;
+      // switch (F_res_permutation)
+      // {
+      //     default:
+      //     case 0:
+      //       std::cout << "vj, vk, vl: (" << ordered_verts[1] << ", " << ordered_verts[2] << ", " << ordered_verts[3] << ")" << std::endl;
+      //       break;
+      //     case 1:
+      //       std::cout << "vl, vj, vk: (" << ordered_verts[3] << ", " << ordered_verts[1] << ", " << ordered_verts[2] << ")" << std::endl;
+      //       break;
+      //     case 2:
+      //       std::cout << "vk, vl, vj: (" << ordered_verts[2] << ", " << ordered_verts[3] << ", " << ordered_verts[1] << ")" << std::endl;
+      //       break;
+      // }
+      // std::cout << "Face after removal: " << std::endl;
+      // printGCSFace(iSData.intrinsicMesh->face(F_res));
+      // std::cout << "F_jk: ";
+      // switch (F_jk_shared)
+      // {
+      //     default:
+      //     case 0:
+      //       std::cout << "vi, vj, vk: (" << ordered_verts[0] << ", " << ordered_verts[1] << ", " << ordered_verts[2] << ")" << std::endl;
+      //       break;
+      //     case 1:
+      //       std::cout << "vk, vi, vj: (" << ordered_verts[2] << ", " << ordered_verts[0] << ", " << ordered_verts[1] << ")" << std::endl;
+      //       break;
+      //     case 2:
+      //       std::cout << "vj, vk, vi: (" << ordered_verts[1] << ", " << ordered_verts[2] << ", " << ordered_verts[0] << ")" << std::endl;
+      //       break;
+      // }
+      // std::cout << "F_jl: ";
+      // switch (F_jl_shared)
+      // {
+      //     default:
+      //     case 0:
+      //       std::cout << "vi, vl, vj: (" << ordered_verts[0] << ", " << ordered_verts[3] << ", " << ordered_verts[1] << ")" << std::endl;
+      //       break;
+      //     case 1:
+      //       std::cout << "vj, vi, vl: (" << ordered_verts[1] << ", " << ordered_verts[0] << ", " << ordered_verts[3] << ")" << std::endl;
+      //       break;
+      //     case 2:
+      //       std::cout << "vl, vj, vi: (" << ordered_verts[3] << ", " << ordered_verts[1] << ", " << ordered_verts[0] << ")" << std::endl;
+      //       break;
+      // }
+      // std::cout << "F_kl: ";
+      // switch (F_kl_shared)
+      // {
+      //     default:
+      //     case 0:
+      //       std::cout << "vi, vk, vl: (" << ordered_verts[0] << ", " << ordered_verts[2] << ", " << ordered_verts[3] << ")" << std::endl;
+      //       break;
+      //     case 1:
+      //       std::cout << "vl, vi, vk: (" << ordered_verts[3] << ", " << ordered_verts[0] << ", " << ordered_verts[2] << ")" << std::endl;
+      //       break;
+      //     case 2:
+      //       std::cout << "vk, vl, vi: (" << ordered_verts[2] << ", " << ordered_verts[3] << ", " << ordered_verts[0] << ")" << std::endl;
+      //       break;
+      // }
       // NOTE: I tried to figure out how geometry central determines the permutation of vertex indices of the resulting face (e.g. a face ijk could be stored as ijk, jki or kij, and we need to be exact here because this affects our barycentric coordinates)
       // but I gave up. It mostly keeps the order of F_jk, but some unaccounted edge cases remain.
       // Instead I just look what order gcs has determined and pass that.
@@ -586,6 +419,80 @@ bool remove_vertex(iSimpData& iSData, const int vertex_idx)
       // insert vertex removal into mapping queue
       iSData.mapping.push_back(std::make_unique<Vertex_Removal>(F_idxs, F_res, unfolded, shared_face_vertex_indices, F_res_permutation));
       return true;
+}
+
+// greedily flip edges, until delaunay
+void flip_to_delaunay(iSimpData& iSData)
+{
+  for (gcs::Edge E : iSData.intrinsicMesh->edges())
+  {
+    if(E.isBoundary()) { continue; }
+    gcs::Face Fk;
+    gcs::Face Fl;
+    bool t = true;
+    for (gcs::Face F : E.adjacentFaces())
+    {
+      if (t) {
+        Fk = F;
+        t = false;
+      } else {
+        Fl = F;
+      }
+    }
+    std::pair<int, int> Fk_unique = find_unique_vertex_index(Fk, E);
+    std::pair<int, int> Fl_unique = find_unique_vertex_index(Fl, E);
+    std::array<int, 5> edge_indices = order_quad_edge_indices(E, Fk_unique.second, Fl_unique.second);
+    double l_ij = iSData.L(edge_indices[0]);
+    double l_ik = iSData.L(edge_indices[1]);
+    double l_jk = iSData.L(edge_indices[2]);
+    double l_il = iSData.L(edge_indices[3]);
+    double l_jl = iSData.L(edge_indices[4]);
+    if (l_ij < 0.0000000001) { std::cout << "flip_to_delaunay: Calling angle_i with zero length" << std::endl; }
+    double theta_k = angle_i_from_lengths(l_ik, l_jk, l_ij);
+    if (l_ij < 0.0000000001) { std::cout << "flip_to_delaunay: Calling angle_i with zero length" << std::endl; }
+    double theta_l = angle_i_from_lengths(l_il, l_jl, l_ij);
+    if(theta_k + theta_l > M_PI)
+    {
+      flip_intrinsic(iSData, E);
+    }
+  }
+
+  // bool found_flip = true;
+  // while(found_flip)
+  // {
+  //   found_flip = false;
+  //   for (gcs::Edge E : iSData.intrinsicMesh->edges())
+  //   {
+  //     if(E.isBoundary()) { continue; }
+  //     gcs::Face Fk;
+  //     gcs::Face Fl;
+  //     bool t = true;
+  //     for (gcs::Face F : E.adjacentFaces())
+  //     {
+  //       if (t) {
+  //         Fk = F;
+  //         t = false;
+  //       } else {
+  //         Fl = F;
+  //       }
+  //     }
+  //     std::pair<int, int> Fk_unique = find_unique_vertex_index(Fk, E);
+  //     std::pair<int, int> Fl_unique = find_unique_vertex_index(Fl, E);
+  //     std::array<int, 5> edge_indices = order_quad_edge_indices(E, Fk_unique.second, Fl_unique.second);
+  //     double l_ij = iSData.L(edge_indices[0]);
+  //     double l_ik = iSData.L(edge_indices[1]);
+  //     double l_jk = iSData.L(edge_indices[2]);
+  //     double l_il = iSData.L(edge_indices[3]);
+  //     double l_jl = iSData.L(edge_indices[4]);
+  //     double theta_k = angle_i_from_lengths(l_ik, l_jk, l_ij);
+  //     double theta_l = angle_i_from_lengths(l_il, l_jl, l_ij);
+  //     if(theta_k + theta_l > M_PI)
+  //     {
+  //       found_flip = flip_intrinsic(iSData, E);
+  //       if (found_flip) { break; }
+  //     }
+  //   }
+  // }
 }
 
 bool flip_vertex_to_deg3(iSimpData& iSData, const int vertex_idx)
@@ -695,7 +602,14 @@ PolarVector2D next_error_vector(const iSimpData& iSData, const double alpha, con
   // std::cout << "mi: " << mi << ", mj: " << mj << std::endl;
 
   gcs::Edge connection = iSData.intrinsicMesh->connectingEdge(vertex, neighbor);
+  // TODO:
+  // std::cout << connection << std::endl;
+  // if (connection.isDead()) { std::cout << RED << "Chose dead connection!" << RESET << std::endl; }
+  if (connection.isBoundary()) { std::cout << RED << "Chose dead connection!" << RESET << std::endl; }
+  if (connection.firstVertex().isDead()) { std::cout << RED << "Chose dead connection!" << RESET << std::endl; return PolarVector2D(0.0, 0.0); }
+  if (connection.secondVertex().isDead()) { std::cout << RED << "Chose dead connection!" << RESET << std::endl; return PolarVector2D(0.0, 0.0); }
   double edge_angle = find_tangent_space_angle(iSData, connection, neighbor);
+  // TODO: 
   double edge_length = iSData.L[connection.getIndex()];
   Vector2D transport = to_cartesian({edge_angle, edge_length});
   Vector2D transported = to_cartesian(parallel_transport(iSData, T, vertex, neighbor));
@@ -739,8 +653,11 @@ double intrinsic_curvature_error(const iSimpData& iSData, const gcs::Vertex vert
       double l_ik = L_opt[edge_indices[1]];
       double l_jk = iSData.L[edge_indices[2]];
 
+      if (l_jk < 0.0000000001) { std::cout << "intrinsic_curvature_error: Calling angle_i with zero length" << std::endl; }
       enumerator -= angle_i_from_lengths(l_ij, l_ik, l_jk);
+      if (l_ij < 0.0000000001) { std::cout << "intrinsic_curvature_error: Calling angle_i with zero length" << std::endl; }
       double theta_ij = angle_i_from_lengths(l_ik, l_jk, l_ij);
+      if (l_ik < 0.0000000001) { std::cout << "intrinsic_curvature_error: Calling angle_i with zero length" << std::endl; }
       double theta_ik = angle_i_from_lengths(l_ij, l_jk, l_ik);
       denominator += 1.0/std::tan(theta_ij);
       denominator += 1.0/std::tan(theta_ik);
@@ -1086,6 +1003,7 @@ double total_angle(const iSimpData& iSData, const gcs::Vertex& vertex)
     double l_ij = iSData.L[edge_indices[0]];
     double l_ik = iSData.L[edge_indices[1]];
     double l_jk = iSData.L[edge_indices[2]];
+    if (l_jk < 0.0000000001) { std::cout << "Calling angle_i from total_angle with zero length" << std::endl; }
 
     total_angle += angle_i_from_lengths(l_ij, l_ik, l_jk);
   }
@@ -1108,7 +1026,9 @@ double gaussian_curvature(const iSimpData& iSData, const gcs::Vertex& vertex)
     double l_ij = iSData.L[edge_indices[0]];
     double l_ik = iSData.L[edge_indices[1]];
     double l_jk = iSData.L[edge_indices[2]];
+    // std::cout << "Calcing Curvature" << std::endl;
 
+    if (l_jk < 0.0000000001) { std::cout << "gaussian_curvature: Calling angle_i with zero length" << std::endl; }
     curvature -= angle_i_from_lengths(l_ij, l_ik, l_jk);
   }
 
@@ -1153,19 +1073,29 @@ double find_tangent_space_angle(const iSimpData& iSData, const gcs::Edge& edge, 
 
     if (found_sth)
     {
-      he.tipVertex();
       gcs::Edge connecting_edge = iSData.intrinsicMesh->connectingEdge(last_edge.tipVertex(), he.tipVertex());
+      // TODO:
+      if (connecting_edge != connecting_edge)
+      {
+        std::cout << "looking for edge: (" << last_edge.tipVertex() << ", " << he.tipVertex() << ")" << std::endl;
+        std::cout << connecting_edge << std::endl;
+      }
+      // if (connecting_edge.firstVertex().isDead()) { std::cout << RED << " chose dead connection! " << RESET << std::endl; }
+      // if (connecting_edge.secondVertex().isDead()) { std::cout << RED << " chose dead connection! " << RESET << std::endl; }
       double l_ij = iSData.L[he.edge().getIndex()];
       double l_ik = iSData.L[last_edge.edge().getIndex()];
       double l_jk = iSData.L[connecting_edge.getIndex()];
 
+      if (l_jk < 0.0000000001) { std::cout << "find_tangent_space_angle: Calling angle_i with zero length" << std::endl; }
       angle += angle_i_from_lengths(l_ij, l_ik, l_jk);
       last_edge = he;
     }
   }
 
   double angle_sum = total_angle(iSData, vertex);
+  if (angle_sum == 0.0) { std::cout << RED << "found 0.0 angle_sum!" << std::endl; }
   if (!found_ref_edge_first) { angle = angle_sum - angle; }
+  // std::cout << BLUE << "tangent result: " << angle / angle_sum << RESET << std::endl;
   return angle / angle_sum;
 }
 

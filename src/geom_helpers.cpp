@@ -46,7 +46,9 @@ Eigen::MatrixXd rotate_selected(Eigen::MatrixXd U, const Eigen::VectorXi selecte
 
 Quad2D unfold(const double l_ij, const double l_ik, const double l_jk, const double l_il, const double l_jl)
 {
+  if (l_jk == 0.0) { std::cout << "unfold: Calling angle_i  with zero length" << std::endl; }
   double theta_i_k = angle_i_from_lengths(l_ij, l_ik, l_jk);
+  if (l_jl == 0.0) { std::cout << "unfold: Calling angle_i  with zero length" << std::endl; }
   double theta_i_l = angle_i_from_lengths(l_ij, l_il, l_jl);
   // TODO: remove prints
   // std::cout << "calced theta_i_k: " << theta_i_k << std::endl;

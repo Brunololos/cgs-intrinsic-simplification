@@ -267,7 +267,7 @@ int main(int argc, char *argv[])
       }
     }
     viewer.data().set_texture(R, G, B);
-    std::cout << "write_success: " << igl::png::writePNG(R, G, B, A, "H:/GIT/cgs-intrinsic-simplification/textures/object_texture.png") << std::endl;
+    // std::cout << "write_success: " << igl::png::writePNG(R, G, B, A, "H:/GIT/cgs-intrinsic-simplification/textures/object_texture.png") << std::endl;
   };
 
   const auto update_mesh_points = [&](Eigen::VectorXi &selected_indices, Eigen::MatrixXd &selected_constraints)
@@ -427,80 +427,18 @@ int main(int argc, char *argv[])
     std::string filename;
     double theta = 0;
     double U22, U21;
-    Eigen::MatrixXi F_new = Eigen::MatrixXi(F.rows(), F.cols());
+    Eigen::MatrixXi F_new;
     std::vector<gcs::Vertex> temp_neighbors = std::vector<gcs::Vertex>();
     std::pair<int, double>* current;
     int i = 0;
     int r;
     double ice;
     bool could_flip, could_flatten, could_remove, could_flip_to_deg3;
-    // TODO: remove later
-    gcs::Edge eddge = iSData.inputMesh->edge(12);
-    std::vector<int> e_idxs = std::vector<int>();
-    std::vector<int> v_idxs = std::vector<int>();
-    // e_idxs.push_back(15);
-    // e_idxs.push_back(11);
-    // e_idxs.push_back(16);
-    // e_idxs.push_back(-1);
-    // // e_idxs.push_back(8);
-    // // e_idxs.push_back(3);
-    // // e_idxs.push_back(-1);
-    // e_idxs.push_back(22);
-    // e_idxs.push_back(20);
-    // e_idxs.push_back(16);
-    // e_idxs.push_back(19);
-    // e_idxs.push_back(-1);
-    // v_idxs.push_back(7);
-    // // v_idxs.push_back(4);
-    // v_idxs.push_back(10);
-    e_idxs.push_back(40);
-    e_idxs.push_back(14);
-    e_idxs.push_back(20);
-    e_idxs.push_back(-1);
-    e_idxs.push_back(14);
-    e_idxs.push_back(13);
-    e_idxs.push_back(12);
-    e_idxs.push_back(18);
-    e_idxs.push_back(-1);
-    // e_idxs.push_back(49);
-    // e_idxs.push_back(45);
-    // e_idxs.push_back(50);
-    // e_idxs.push_back(-1);
-    // e_idxs.push_back(43);
-    // e_idxs.push_back(-1);
-    e_idxs.push_back(23);
-    e_idxs.push_back(-1);
-    // e_idxs.push_back(33);
-    // e_idxs.push_back(7);
-    // e_idxs.push_back(-1);
-    // e_idxs.push_back(37);
-    // e_idxs.push_back(-1);
-    // e_idxs.push_back(45);
-    // e_idxs.push_back(43);
-    // e_idxs.push_back(37);
-    // e_idxs.push_back(33);
-    e_idxs.push_back(18);
-    // e_idxs.push_back(27);
-    // e_idxs.push_back(-1);
-
-    v_idxs.push_back(8);
-    v_idxs.push_back(7);
-    // v_idxs.push_back(21);
-    // v_idxs.push_back(19);
-    v_idxs.push_back(10);
-    // v_idxs.push_back(5);
-    // v_idxs.push_back(17);
-    // v_idxs.push_back(11);
-
-    // TODO: remove lateer
-    BarycentricPoint bp;
-    // bp << 0.25, 0.25, 0.5; // Don't forget that the barycentric coordinates have to sum to unity.
-    // bp << 1.0/3.0, 1.0/3.0, 1.0/3.0; // Don't forget that the barycentric coordinates have to sum to unity.
-    bp << 1.0, 0.0, 0.0; // Don't forget that the barycentric coordinates have to sum to unity.
 
     switch (key)
     {
     case ' ':
+      if (iSData.hasConverged) return true;
       // TODO: later change .inputMesh to .intrinsicMesh
 
       // NOTE: Performing random intrinsic edge-flips
@@ -574,12 +512,21 @@ int main(int argc, char *argv[])
       // }
 
       if(iSData.Q.empty()) { return true; } // TODO: could also later be replaced by a finished flag
+      // i = 0;
+      // for(auto elem : iSData.Q)
+      // {
+      //   if (i > 10) { break; }
+      //   std::cout << elem->first << ", " << elem->second << std::endl;
+      //   i++;
+      // }
       current = iSData.Q.begin()->get();   // this is Q.top()
       iSData.Q.erase(iSData.Q.begin());    // this is Q.pop()
       r = current->first;
       ice = current->second;
 
-      if(std::isinf(ice)) { return true; }
+      if(std::isinf(ice)) { std::cout << "Converged!" << std::endl; iSData.hasConverged = true; return true; }
+      if (iSData.intrinsicMesh->vertex(r).isDead()) { return true; }
+      // if (iSData.intrinsicMesh->vertex(r).isBoundary()) { return true; }
       std::cout << "\n\n\nflatten vertex: " << r << std::endl;
       could_flatten = flatten_vertex(iSData, r);
       if(could_flatten)
@@ -598,7 +545,9 @@ int main(int argc, char *argv[])
           could_remove = remove_vertex(iSData, r);
           if(could_remove) { std::cout << "Vertex Removal successful!" << std::endl; }
           else { std::cout << "Vertex Removal failed!" << std::endl; }
-
+          // try to enforce delaunay by iterating over all edges and flipping them, if necessary
+          // NOTE: one could try to be smarter and only iterate over edges incident to the changed vertices/edges
+          flip_to_delaunay(iSData);
         }
         else { std::cout << dye("Vertex Flipping to degree 3 failed!", RED) << std::endl; }
 
@@ -611,8 +560,12 @@ int main(int argc, char *argv[])
       {
         for (gcs::Vertex neighbor : temp_neighbors)
         {
+          // because we are working with delta complexes, we can have self edges and have to check not to reinsert already removed vertices
+          if (neighbor.isDead()) { continue; }
+          if (neighbor.getIndex() == r) { continue; }
           double ice = intrinsic_curvature_error(iSData, neighbor);
-          iSData.Q.erase(iSData.Q.find(std::make_shared<std::pair<int, double>>(iSData.Q_elems[neighbor.getIndex()]))); // erase the element to be sure the order gets updated
+          // iSData.Q.erase(iSData.Q.find(std::make_shared<std::pair<int, double>>(iSData.Q_elems[neighbor.getIndex()]))); // erase the element to be sure the order gets updated
+          iSData.Q.erase(std::make_shared<std::pair<int, double>>(iSData.Q_elems[neighbor.getIndex()])); // erase the element to be sure the order gets updated
           iSData.Q_elems[neighbor.getIndex()].second = ice;
           iSData.Q.insert(std::make_shared<std::pair<int, double>>(iSData.Q_elems[neighbor.getIndex()]));
         }
@@ -621,44 +574,34 @@ int main(int argc, char *argv[])
         iSData.Q.insert(std::make_shared<std::pair<int, double>>(iSData.Q_elems[r]));
       }
 
-      // if (e_idxs[eid] == -1)
+      // i = 0;
+      // // Set intrinsic faces to be visualized extrinsically. This only makes sense for flat surfaces.
+      // F_new = Eigen::MatrixXi(iSData.intrinsicMesh->nFaces(), F.cols());
+      // for (gcs::Face F : iSData.intrinsicMesh->faces())
       // {
-      //   std::cout << "removing vertex " << v_idxs[vid] << std::endl;
-      //   could_remove = remove_vertex(iSData, v_idxs[vid]);
-      //   if(!could_remove) { std::cout << "Vertex Removal failed!" << std::endl; }
-      //   vid++;
+      //   Eigen::Vector3i ffface = Eigen::Vector3i();
+      //   int j = 0;
+      //   for (gcs::Vertex VV : F.adjacentVertices())
+      //   {
+      //     ffface(j) = VV.getIndex();
+      //     j++;
+      //   }
+      //   F_new.row(i) = ffface;
+      //   // if (H(i, 0) != F_new(i, 0) || H(i, 1) != F_new(i, 1) || H(i, 2) != F_new(i, 2))
+      //   // if (F_new(i, 0) == F_new(i, 1) || F_new(i, 1) == F_new(i, 2) || F_new(i, 2) == F_new(i, 0))
+      //   // {
+      //   //   std::cout << "updating face: " << F.getIndex() << std::endl;
+      //   //   printEigenVector3i(H.row(i));
+      //   //   std::cout << "to: " << std::endl;
+      //   //   printEigenVector3i(F_new.row(i));
+      //   // }
+      //   i++;
       // }
-      // else
-      // {
-      //   std::cout << "flipping edge " << e_idxs[eid] << "(" << iSData.intrinsicMesh->edge(e_idxs[eid]).firstVertex().getIndex() << ", " << iSData.intrinsicMesh->edge(e_idxs[eid]).secondVertex().getIndex() << ")" << std::endl;
-      //   could_flip = flip_intrinsic(iSData, iSData.intrinsicMesh->edge(e_idxs[eid]));
-      //   if(!could_flip) { std::cout << "Edge Flip failed!" << std::endl; }
-      // }
-      // eid++;
-
-      i = 0;
-      // I think this was updating the displayed faces for debugging purposes
-      for (gcs::Face F : iSData.intrinsicMesh->faces())
-      {
-        Eigen::Vector3i ffface = Eigen::Vector3i();
-        int j = 0;
-        for (gcs::Vertex VV : F.adjacentVertices())
-        {
-          ffface(j) = VV.getIndex();
-          j++;
-        }
-        F_new.row(i) = ffface;
-        i++;
-      }
-      H = F_new;
-      // TODO: figure out a way to store the mapping with varying mapping objects in a vector
-      // ((std::unique_ptr<Edge_Flip>) iSData.mapping[0])->map_to_coarse(iSData.mapped_points, iSData.mapped_by_triangle);
-      // iSData.mapping[0]->map_to_coarse(iSData.mapped_points, iSData.mapped_by_triangle);
-      // map_registered(iSData);
+      // H = F_new;
       // refresh_mesh();
       map_registered(iSData);
       update_texture();
-      // if (iSData.hasConverged) return true; // TODO: replace
+      // refresh_mesh();
       // step manually
       if (simpMode == ISIMP_MODE::ON_INPUT)
       {
@@ -715,42 +658,9 @@ int main(int argc, char *argv[])
       return true;
     case 'W':
     case 'w':
-      // // update texture
-      // std::cout << "Updating texture: " << std::endl;
-      // for (gcs::Face F : iSData.intrinsicMesh->faces())
-      // {
-      //   std::cout << "-> texturing intrinsic face: " << F << std::endl;
-      //   for (gcs::Vertex V : F.adjacentVertices())
-      //   {
-      //     std::cout << "---> texturing intrinsic vertex: " << V << std::endl;
-      //     int v_idx = V.getIndex();
-      //     Eigen::Vector2d uv = UV.row(v_idx);
-      //     std::cout << "---> that maps to u: " << uv[0] << ", v: " << uv[1] << std::endl;
-      //     // int x = TEXTURE_WIDTH - (int) ((uv[0] + 1.0) / 2.0 * TEXTURE_WIDTH);
-      //     // int y = TEXTURE_HEIGHT - (int) ((uv[1] + 1.0) / 2.0 * TEXTURE_HEIGHT);
-      //     int x = (int) ((uv[0]) * TEXTURE_WIDTH);
-      //     int y = (int) ((uv[1]) * TEXTURE_HEIGHT);
-      //     // NOTE: negative checks not needed anymore, because we constrain uv's to be within the range [0, 1]
-      //     // if (x < 0) { x += TEXTURE_WIDTH; }
-      //     // if (y < 0) { y += TEXTURE_HEIGHT; }
-      //     std::cout << "---> Calculated texture position of uv. x: " << x << ", y: " << y << std::endl;
-      //     G(x, y) = 0;
-      //   }
-      // }
-      // // G(22, 88) = 0;
-      // // G(22, 12) = 0;
-      // // G(43, 23) = 0;
-      // for (int i=0; i<TEXTURE_WIDTH; i++)
-      // {
-      //   for (int j=0; j<TEXTURE_HEIGHT; j++)
-      //   {
-      //     R(i, j) = (int) ((((double) i) * 255.0) / ((double) TEXTURE_WIDTH));
-      //     B(i, j) = (int) ((((double) j) * 255.0) / ((double) TEXTURE_HEIGHT));
-      //   }
-      // }
+      // update texture
+      std::cout << "write_success: " << igl::png::writePNG(R, G, B, A, "H:/GIT/cgs-intrinsic-simplification/textures/object_texture.png") << std::endl;
       refresh_mesh();
-      // igl::png::writePNG(R, G, B, A, "textures/object_texture.png");
-      // std::cout << "write_success: " << igl::png::writePNG(R, G, B, A, "H:/GIT/cgs-intrinsic-simplification/textures/object_texture.png") << std::endl;
       return true;
     case 'E':
     case 'e':

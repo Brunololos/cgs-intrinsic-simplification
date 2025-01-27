@@ -17,6 +17,7 @@ bool is_edge_flippable(const iSimpData& iSData, const Quad2D& quad, const gcs::E
 bool flip_intrinsic(iSimpData& iSData, const gcs::Edge edge);
 bool flatten_vertex(iSimpData& iSData, const int vertex_idx);
 bool remove_vertex(iSimpData& iSData, const int vertex_idx);
+void flip_to_delaunay(iSimpData& iSData);
 bool flip_vertex_to_deg3(iSimpData& iSData, const int vertex_idx);
 void rotate_reference_edge(iSimpData& iSData, const gcs::Vertex& vertex);
 

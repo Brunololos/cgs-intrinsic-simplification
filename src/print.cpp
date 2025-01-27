@@ -233,6 +233,17 @@ void printEigenVector3d(Eigen::Vector3d p)
     std::cout << ")" << std::endl;
 }
 
+void printEigenVector3i(Eigen::Vector3i p)
+{
+    std::cout << "(";
+    for (int i=0; i<p.size(); i++)
+    {
+        std::cout << p[i];
+        if (i < p.size()-1) { std::cout << ", "; }
+    }
+    std::cout << ")" << std::endl;
+}
+
 void printEigenVector2d(Eigen::Vector2d p)
 {
     std::cout << "(";
