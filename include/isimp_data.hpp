@@ -71,7 +71,6 @@ enum class SIMP_OP {
     V_REMOVAL = 2
 };
 
-// TODO:
 class Mapping_operation {
     public:
         SIMP_OP op_type;

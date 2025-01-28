@@ -69,14 +69,10 @@ int main(int argc, char *argv[])
   iSimpData iSData;
   initMesh(V, F, iSData);
 
-  // TODO: remove
-  int eid = 0;
-  int vid = 0;
   // randomize seed
   srand(time(NULL));
 
   // TODO:
-  std::pair<Eigen::MatrixXd, double> result; // result of the last simplification step
   std::ofstream logFile;                     // logfile
   bool doLogging = false;
 
@@ -84,6 +80,7 @@ int main(int argc, char *argv[])
   igl::opengl::glfw::Viewer viewer;
   igl::opengl::glfw::imgui::ImGuiPlugin plugin;
 
+  // TODO:
   // Eigen::Matrix<unsigned char,Eigen::Dynamic,Eigen::Dynamic> R,G,B,A;
   // igl::png::readPNG(argc > 2 ? argv[2] : "../textures/texture.png", R,G,B,A);
   // igl::png::readPNG("../textures/deformedCube (during optimisation).png", R,G,B,A);
@@ -361,13 +358,13 @@ int main(int argc, char *argv[])
 
   viewer.callback_pre_draw = [&](igl::opengl::glfw::Viewer &viewer) -> bool
   {
-    // TODO: implement simplification
-    // if (simpMode == ISIMP_MODE::EACH_FRAME && optimise && !iSData.hasConverged)
-    // {
-    //   // Simplification
-    //   std::cout << "simplification iteration: " << iSData.iteration;
-    //   // TODO: reduce
-    //   // std::pair<double, double> optEnergies = asdap_energies(iSData, U);
+    if (simpMode == ISIMP_MODE::EACH_FRAME && optimise && !iSData.hasConverged)
+    {
+      // Simplification
+      // std::cout << "simplification iteration: " << iSData.iteration;
+      iSimp_step(iSData);
+      map_registered(iSData);
+      update_texture();
     //   // // logging
     //   // if (doLogging)
     //   // {
@@ -384,7 +381,7 @@ int main(int argc, char *argv[])
     //   if (doLogging) { (logFile).close(); doLogging = false; }
     //   std::cout << "optimisation converged!" << std::endl;
     //   optimise = false;
-    // }
+    }
     return false;
   };
 
@@ -420,193 +417,53 @@ int main(int argc, char *argv[])
 
   viewer.callback_key_pressed = [&](decltype(viewer) &, unsigned int key, int mod)
   {
-    // std::pair<double, double> optEnergies;
-    std::pair<Eigen::MatrixXd, double> result;
     std::chrono::system_clock::time_point timestamp;
     std::time_t time;
     std::string filename;
     double theta = 0;
     double U22, U21;
     Eigen::MatrixXi F_new;
-    std::vector<gcs::Vertex> temp_neighbors = std::vector<gcs::Vertex>();
-    std::pair<int, double>* current;
-    int i = 0;
-    int r;
-    double ice;
-    bool could_flip, could_flatten, could_remove, could_flip_to_deg3;
 
     switch (key)
     {
     case ' ':
       if (iSData.hasConverged) return true;
-      // TODO: later change .inputMesh to .intrinsicMesh
-
-      // NOTE: Performing random intrinsic edge-flips
-      // r = rand() % iSData.inputMesh->nEdges();
-      // r = 1;
-      // // for (gcs::Edge E : iSData.intrinsicMesh->edges())
-      // TODO: just add this check into can_be_flipped() method (don't allow boundary flips)
-      // while (true)
-      // {
-      //   r = rand() % iSData.intrinsicMesh->nEdges();
-      //   gcs::Edge E = iSData.intrinsicMesh->edge(r);
-      //   int nk = 0;
-      //   for (gcs::Face F : E.adjacentFaces())
-      //   {
-      //     nk++;
-      //   }
-      //   if (nk == 2)
-      //   {
-      //     r = E.getIndex();
-      //     break;
-      //   }
-      // }
-      // std::cout << "flip edge: " << r << " => (" << iSData.intrinsicMesh->edge(r).firstVertex().getIndex() << ", " << iSData.intrinsicMesh->edge(r).secondVertex().getIndex() << ")" << std::endl;
-      // could_flip = flip_intrinsic(iSData, iSData.intrinsicMesh->edge(r));
-      // if (could_flip)
-      // {
-      //   std::cout << "Edge flip successful!" << std::endl;
-      // }
-      // if (!could_flip)
-      // {
-      //   std::cout << "Edge flip failed!" << std::endl;
-      // }
-
-      // NOTE: Performing random intrinsic vertex flattenings
-      // r = rand() % iSData.intrinsicMesh->nVertices();
-      // while (true)
-      // {
-      //   r = rand() % iSData.intrinsicMesh->nVertices();
-      //   gcs::Vertex V = iSData.intrinsicMesh->vertex(r);
-      //   if (!V.isBoundary()) { break; }
-      // }
-      // // r = 115;
-      // std::cout << "flatten vertex: " << r << std::endl;
-      // could_flatten = flatten_vertex(iSData, r);
-      // if(could_flatten) { std::cout << "Vertex Flattening successful!" << std::endl; }
-      // if(!could_flatten) { std::cout << "Vertex Flattening failed!" << std::endl; }
-
-      // r = rand() % V.rows(); // iSData.intrinsicMesh->nVertices();
-      // i = 0;
-      // while (i < 100)
-      // {
-      //   r = rand() % V.rows(); // iSData.intrinsicMesh->nVertices();
-      //   gcs::Vertex V = iSData.intrinsicMesh->vertex(r);
-      //   // std::cout << "Checking vertex: " << r << std::endl;
-      //   if (!V.isDead() && !V.isBoundary())
-      //   {
-      //     // r = 115;
-      //     std::cout << "\n\n\nflatten vertex: " << r << std::endl;
-      //     could_flatten = flatten_vertex(iSData, r);
-      //     if(!could_flatten) { std::cout << "Vertex Flattening failed!" << std::endl; break; }
-      //     std::cout << "\n\n\nflip vertex: " << r << " to degree 3: " << std::endl;
-      //     could_flip_to_deg3 = flip_vertex_to_deg3(iSData, r);
-      //     if(!could_flip_to_deg3) { std::cout << dye("Vertex Flipping to degree 3 failed!", RED) << std::endl; break; }
-      //     std::cout << "\n\n\nremove vertex: " << r << std::endl;
-      //     could_remove = remove_vertex(iSData, r);
-      //     if(could_remove) { std::cout << "Vertex Removal successful!" << std::endl; }
-      //     if(!could_remove) { std::cout << "Vertex Removal failed!" << std::endl; }
-      //     break;
-      //   }
-      //   i++;
-      // }
-
-      if(iSData.Q.empty()) { return true; } // TODO: could also later be replaced by a finished flag
-      // i = 0;
-      // for(auto elem : iSData.Q)
-      // {
-      //   if (i > 10) { break; }
-      //   std::cout << elem->first << ", " << elem->second << std::endl;
-      //   i++;
-      // }
-      current = iSData.Q.begin()->get();   // this is Q.top()
-      iSData.Q.erase(iSData.Q.begin());    // this is Q.pop()
-      r = current->first;
-      ice = current->second;
-
-      if(std::isinf(ice)) { std::cout << "Converged!" << std::endl; iSData.hasConverged = true; return true; }
-      if (iSData.intrinsicMesh->vertex(r).isDead()) { return true; }
-      // if (iSData.intrinsicMesh->vertex(r).isBoundary()) { return true; }
-      std::cout << "\n\n\nflatten vertex: " << r << std::endl;
-      could_flatten = flatten_vertex(iSData, r);
-      if(could_flatten)
-      {
-        std::cout << "\n\n\nflip vertex: " << r << " to degree 3: " << std::endl;
-        could_flip_to_deg3 = flip_vertex_to_deg3(iSData, r);
-        if(could_flip_to_deg3)
-        {
-          std::cout << "\n\n\nremove vertex: " << r << std::endl;
-          // save neighbors, because we cant iterate over vertex neighborhood after vertex removal
-          temp_neighbors.clear();
-          std::cout << "cleared temp_neighbors: ";
-          for (gcs::Vertex neighbor : temp_neighbors) { std::cout << neighbor.getIndex() << ", "; }
-          std::cout << std::endl;
-          for (gcs::Vertex neighbor : iSData.intrinsicMesh->vertex(r).adjacentVertices()) { std::cout << "inserting temp_neighbor: " << neighbor.getIndex() << std::endl; temp_neighbors.push_back(neighbor); }
-          could_remove = remove_vertex(iSData, r);
-          if(could_remove) { std::cout << "Vertex Removal successful!" << std::endl; }
-          else { std::cout << "Vertex Removal failed!" << std::endl; }
-          // try to enforce delaunay by iterating over all edges and flipping them, if necessary
-          // NOTE: one could try to be smarter and only iterate over edges incident to the changed vertices/edges
-          flip_to_delaunay(iSData);
-        }
-        else { std::cout << dye("Vertex Flipping to degree 3 failed!", RED) << std::endl; }
-
-      }
-      else { std::cout << "Vertex Flattening failed!" << std::endl; }
-
-      // TODO: on success: update values of neighbor ice's
-      // on failure: reinsert vertex with infinite value on failure
-      if (could_flatten && could_flip_to_deg3 && could_remove)
-      {
-        for (gcs::Vertex neighbor : temp_neighbors)
-        {
-          // because we are working with delta complexes, we can have self edges and have to check not to reinsert already removed vertices
-          if (neighbor.isDead()) { continue; }
-          if (neighbor.getIndex() == r) { continue; }
-          double ice = intrinsic_curvature_error(iSData, neighbor);
-          // iSData.Q.erase(iSData.Q.find(std::make_shared<std::pair<int, double>>(iSData.Q_elems[neighbor.getIndex()]))); // erase the element to be sure the order gets updated
-          iSData.Q.erase(std::make_shared<std::pair<int, double>>(iSData.Q_elems[neighbor.getIndex()])); // erase the element to be sure the order gets updated
-          iSData.Q_elems[neighbor.getIndex()].second = ice;
-          iSData.Q.insert(std::make_shared<std::pair<int, double>>(iSData.Q_elems[neighbor.getIndex()]));
-        }
-      } else {
-        iSData.Q_elems[r].second = INFINITY;
-        iSData.Q.insert(std::make_shared<std::pair<int, double>>(iSData.Q_elems[r]));
-      }
-
-      // i = 0;
-      // // Set intrinsic faces to be visualized extrinsically. This only makes sense for flat surfaces.
-      // F_new = Eigen::MatrixXi(iSData.intrinsicMesh->nFaces(), F.cols());
-      // for (gcs::Face F : iSData.intrinsicMesh->faces())
-      // {
-      //   Eigen::Vector3i ffface = Eigen::Vector3i();
-      //   int j = 0;
-      //   for (gcs::Vertex VV : F.adjacentVertices())
-      //   {
-      //     ffface(j) = VV.getIndex();
-      //     j++;
-      //   }
-      //   F_new.row(i) = ffface;
-      //   // if (H(i, 0) != F_new(i, 0) || H(i, 1) != F_new(i, 1) || H(i, 2) != F_new(i, 2))
-      //   // if (F_new(i, 0) == F_new(i, 1) || F_new(i, 1) == F_new(i, 2) || F_new(i, 2) == F_new(i, 0))
-      //   // {
-      //   //   std::cout << "updating face: " << F.getIndex() << std::endl;
-      //   //   printEigenVector3i(H.row(i));
-      //   //   std::cout << "to: " << std::endl;
-      //   //   printEigenVector3i(F_new.row(i));
-      //   // }
-      //   i++;
-      // }
-      // H = F_new;
-      // refresh_mesh();
-      map_registered(iSData);
-      update_texture();
-      // refresh_mesh();
       // step manually
       if (simpMode == ISIMP_MODE::ON_INPUT)
       {
         // make simplification step
-        // TODO: implement simplification step
+        iSimp_step(iSData);
+
+        // i = 0;
+        // // Set intrinsic faces to be visualized extrinsically. This only makes sense for flat surfaces.
+        // F_new = Eigen::MatrixXi(iSData.intrinsicMesh->nFaces(), F.cols());
+        // for (gcs::Face F : iSData.intrinsicMesh->faces())
+        // {
+        //   Eigen::Vector3i ffface = Eigen::Vector3i();
+        //   int j = 0;
+        //   for (gcs::Vertex VV : F.adjacentVertices())
+        //   {
+        //     ffface(j) = VV.getIndex();
+        //     j++;
+        //   }
+        //   F_new.row(i) = ffface;
+        //   // if (H(i, 0) != F_new(i, 0) || H(i, 1) != F_new(i, 1) || H(i, 2) != F_new(i, 2))
+        //   // if (F_new(i, 0) == F_new(i, 1) || F_new(i, 1) == F_new(i, 2) || F_new(i, 2) == F_new(i, 0))
+        //   // {
+        //   //   std::cout << "updating face: " << F.getIndex() << std::endl;
+        //   //   printEigenVector3i(H.row(i));
+        //   //   std::cout << "to: " << std::endl;
+        //   //   printEigenVector3i(F_new.row(i));
+        //   // }
+        //   i++;
+        // }
+        // H = F_new;
+        // refresh_mesh();
+
+        map_registered(iSData);
+        update_texture();
+        // std::cout << "write_success: " << igl::png::writePNG(R, G, B, A, "H:/GIT/cgs-intrinsic-simplification/textures/object_texture.png") << std::endl;
+        // refresh_mesh();
 
         // Logging
         // TODO: implement logging

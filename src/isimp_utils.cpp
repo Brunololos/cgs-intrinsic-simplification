@@ -1038,57 +1038,65 @@ double gaussian_curvature(const iSimpData& iSData, const gcs::Vertex& vertex)
 double find_tangent_space_angle(const iSimpData& iSData, const gcs::Edge& edge, const gcs::Vertex& vertex)
 {
   double angle = 0.0;
+  // std::cout << "finding tangent space angle of edge: " << edge.getIndex() << " around vertex " << vertex.getIndex() << " with reference edge: " << iSData.intrinsicMesh->edge(iSData.tangent_space_reference_edges[vertex.getIndex()]).getIndex() << std::endl;
 
   // get reference edge
   int vertex_idx = vertex.getIndex();
   int ref_edge_idx = iSData.tangent_space_reference_edges[vertex_idx];
   gcs::Edge ref_edge = iSData.intrinsicMesh->edge(ref_edge_idx);
-  gcs::Halfedge last_edge;
+  if (edge.getIndex() == ref_edge_idx) { return angle; }
+  std::array<int, 3> indices;
 
   bool found_sth = false;
   bool found_ref_edge_first = true;
-  // TODO: hopefully this iterates always in the direction i.e. always clockwise or always counter-clockwise (And it should be, bc Halfedge mesh)
-  // iterate from reference edge around vertex
-  for (gcs::Halfedge he : vertex.outgoingHalfedges())
+  // iterate clockwise through the faces around vertex
+  // NOTE: the edges around faces are ordered counter clockwise. Thus, we need to use indices[1] to get the "lagging behind" edge.
+  for (gcs::Face F : vertex.adjacentFaces())
   {
+    // printGCSFace(F);
+    indices = order_triangle_edge_indices(F, vertex_idx);
+    // std::cout << " determined indices: { " << indices[0] << ", " << indices[1] << ", " << indices[2] << "}" << std::endl;
+    // for (int i = 0; i<3; i++)
+    // {
+    //   std::cout << "edge" << indices[i] << ": " << iSData.intrinsicMesh->edge(indices[i]).firstVertex() << " -> " << iSData.intrinsicMesh->edge(indices[i]).secondVertex() << std::endl;
+    // }
+
     if (!found_sth)
     {
-      last_edge = he;
       // check for ref_edge
-      if (he.edge().getIndex() == ref_edge_idx)
+      if (indices[1] == ref_edge_idx)
       {
         found_ref_edge_first = true;
         found_sth = true;
-        continue;
+        // std::cout << YELLOW << "found ref_edge " << ref_edge_idx << " first" << RESET << std::endl;
       }
       // check for edge
-      if (he.edge().getIndex() == edge.getIndex())
+      else if (indices[1] == edge.getIndex())
       {
         found_ref_edge_first = false;
         found_sth = true;
-        continue;
+        // std::cout << YELLOW << "found edge " << edge.getIndex() << " first" << RESET << std::endl;
       }
-      continue;
+      else { continue; }
     }
 
     if (found_sth)
     {
-      gcs::Edge connecting_edge = iSData.intrinsicMesh->connectingEdge(last_edge.tipVertex(), he.tipVertex());
-      // TODO:
-      if (connecting_edge != connecting_edge)
-      {
-        std::cout << "looking for edge: (" << last_edge.tipVertex() << ", " << he.tipVertex() << ")" << std::endl;
-        std::cout << connecting_edge << std::endl;
-      }
-      // if (connecting_edge.firstVertex().isDead()) { std::cout << RED << " chose dead connection! " << RESET << std::endl; }
-      // if (connecting_edge.secondVertex().isDead()) { std::cout << RED << " chose dead connection! " << RESET << std::endl; }
-      double l_ij = iSData.L[he.edge().getIndex()];
-      double l_ik = iSData.L[last_edge.edge().getIndex()];
-      double l_jk = iSData.L[connecting_edge.getIndex()];
+      double l_ij = iSData.L[indices[0]];
+      double l_ik = iSData.L[indices[1]];
+      double l_jk = iSData.L[indices[2]];
 
-      if (l_jk < 0.0000000001) { std::cout << "find_tangent_space_angle: Calling angle_i with zero length" << std::endl; }
+      if (l_jk < 0.0000000001) { std::cout << "find_tangent_space_angle: Calling angle_i with approx. zero length (length: " << l_jk << " for edge: " << indices[0] << ")" << std::endl; }
       angle += angle_i_from_lengths(l_ij, l_ik, l_jk);
-      last_edge = he;
+      // std::cout << "Updated angle: " << angle << std::endl;
+
+      // terminate, the second time, we find sth
+      // check for ref_edge or edge
+      if (indices[0] == ref_edge_idx || indices[0] == edge.getIndex())
+      {
+        // std::cout << "found sth the second time... Breaking." << std::endl;
+        break;
+      }
     }
   }
 
