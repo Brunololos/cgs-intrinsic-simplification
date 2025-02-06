@@ -1,10 +1,13 @@
-// Copyright 2017-2019, Nicholas Sharp and the Polyscope contributors. http://polyscope.run.
+// Copyright 2017-2023, Nicholas Sharp and the Polyscope contributors. https://polyscope.run
+
 #pragma once
 
 #include <array>
+#include <string>
 
 #include "polyscope/camera_parameters.h"
-#include "polyscope/gl/gl_utils.h"
+#include "polyscope/types.h"
+// #include "polyscope/gl/gl_utils.h"
 
 // GLM for view matrices
 #include "glm/gtc/constants.hpp"
@@ -21,7 +24,11 @@
 namespace polyscope {
 namespace view {
 
-enum class NavigateStyle { Turntable = 0, Free, Planar, Arcball };
+// Previously, these enums were defined here in the `view` namespace, but now for consistency we define all enums in the
+// top-level `polyscope` namespace. For backwards compatability, we import the enums so existing code like
+// polyscope::view::NavigateStyle::Planar still works.
+using polyscope::NavigateStyle;
+using polyscope::UpDir;
 
 // === View state
 extern int bufferWidth;
@@ -31,14 +38,19 @@ extern int windowHeight;
 extern int initWindowPosX;
 extern int initWindowPosY;
 extern NavigateStyle style;
+extern UpDir upDir;
+extern FrontDir frontDir;
 extern double moveScale;
 extern double nearClipRatio;
 extern double farClipRatio;
 extern std::array<float, 4> bgColor;
 
 // Current view camera parameters
+// TODO deprecate these one day, and just use a CameraParameters member instead. But this would break existing code, so
+// for now we leave these as-is and wrap inputs/outputs to a CameraParameters
 extern glm::mat4x4 viewMat;
 extern double fov; // in the y direction
+extern ProjectionMode projectionMode;
 
 // "Flying" view
 extern bool midflight;
@@ -62,38 +74,73 @@ void processClipPlaneShift(double amount);
 void processZoom(double amount);
 
 void setWindowSize(int width, int height);
+std::tuple<int, int> getWindowSize();
+std::tuple<int, int> getBufferSize();
 void setViewToCamera(const CameraParameters& p);
+CameraParameters getCameraParametersForCurrentView();
 
-// Invlidateing the view
+// Invalidating the view:
 // The view is invalid if the viewMat has NaN entries.
 // It is set to invalid initially, but we call ensureViewValid() before any renders.
-// This ensures we never try to redner with an invalid view, but also allows the user to
+// This ensures we never try to render with an invalid view, but also allows the user to
 // set custom views if they wish, without them getting overwritten.
 void invalidateView();
 void ensureViewValid();
 
-// The "default" view simply looks at the origin
-void resetCameraToDefault();
-void flyToDefault();
-
-// The "home" view looks at the center of the scenes bounding box.
+// The "home" view looks at the center of the scene's bounding box.
 glm::mat4 computeHomeView();
 void resetCameraToHomeView();
 void flyToHomeView();
 
+// Set the camera extrinsics to look at a particular location
+void lookAt(glm::vec3 cameraLocation, glm::vec3 target, bool flyTo = false);
+void lookAt(glm::vec3 cameraLocation, glm::vec3 target, glm::vec3 upDir, bool flyTo = false);
+
+// Get various camera matrices and data for the current view
 glm::mat4 getCameraViewMatrix();
+void setCameraViewMatrix(glm::mat4 newMat);
 glm::mat4 getCameraPerspectiveMatrix();
 glm::vec3 getCameraWorldPosition();
-
 void getCameraFrame(glm::vec3& lookDir, glm::vec3& upDir, glm::vec3& rightDir);
 
+// Get world geometry corresponding to a screen pixel (e.g. from a mouse click)
+glm::vec3 screenCoordsToWorldRay(glm::vec2 screenCoords);
+glm::vec3 bufferCoordsToWorldRay(glm::vec2 screenCoords);
+glm::vec3 screenCoordsToWorldPosition(glm::vec2 screenCoords); // queries the depth buffer to get full position
+
 // Flight-related
-void startFlightTo(const CameraParameters& p, float flightLengthInSeconds = .25);
-void startFlightTo(const glm::mat4& T, float targetFov, float flightLengthInSeconds = .25);
+void startFlightTo(const CameraParameters& p, float flightLengthInSeconds = .4);
+void startFlightTo(const glm::mat4& T, float targetFov, float flightLengthInSeconds = .4);
 void immediatelyEndFlight();
-void splitTransform(const glm::mat4& trans, glm::mat3x4& R, glm::vec3& T);
-glm::mat4 buildTransform(const glm::mat3x4& R, const glm::vec3& T);
-void updateFlight();
+
+// Get and set camera from json string
+std::string getViewAsJson();
+void setViewFromJson(std::string jsonData, bool flyTo);
+// DEPRACTED: old names for avove
+std::string getCameraJson();
+void setCameraFromJson(std::string jsonData, bool flyTo);
+
+// Internal helpers. Should probably not be called in user code.
+void buildViewGui();
+void updateFlight(); // Note: uses wall-clock time, so should generally be called exactly once at the beginning of each
+                     // iteration
+
+
+// == Setters, getters, etc
+
+void setUpDir(UpDir newUpDir, bool animateFlight = false);
+UpDir getUpDir();
+glm::vec3 getUpVec();
+
+void setFrontDir(FrontDir newFrontDir, bool animateFlight = false);
+FrontDir getFrontDir();
+glm::vec3 getFrontVec();
+
+void setNavigateStyle(NavigateStyle newNavigateStyle, bool animateFlight = false);
+NavigateStyle getNavigateStyle();
+
+void setWindowResizable(bool isResizable);
+bool getWindowResizable();
 
 } // namespace view
 } // namespace polyscope

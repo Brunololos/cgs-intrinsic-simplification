@@ -75,8 +75,8 @@ typedef VkBool32 (APIENTRY *PFN_vkGetPhysicalDeviceWaylandPresentationSupportKHR
 #define _GLFW_PLATFORM_MONITOR_STATE        _GLFWmonitorWayland wl
 #define _GLFW_PLATFORM_CURSOR_STATE         _GLFWcursorWayland  wl
 
-#define _GLFW_PLATFORM_CONTEXT_STATE
-#define _GLFW_PLATFORM_LIBRARY_CONTEXT_STATE
+#define _GLFW_PLATFORM_CONTEXT_STATE         struct { int dummyContext; }
+#define _GLFW_PLATFORM_LIBRARY_CONTEXT_STATE struct { int dummyLibraryContext; }
 
 struct wl_cursor_image {
     uint32_t width;
@@ -158,7 +158,6 @@ typedef enum _GLFWdecorationSideWayland
     leftDecoration,
     rightDecoration,
     bottomDecoration,
-
 } _GLFWdecorationSideWayland;
 
 typedef struct _GLFWdecorationWayland
@@ -166,7 +165,6 @@ typedef struct _GLFWdecorationWayland
     struct wl_surface*          surface;
     struct wl_subsurface*       subsurface;
     struct wp_viewport*         viewport;
-
 } _GLFWdecorationWayland;
 
 // Wayland-specific per-window data
@@ -216,7 +214,6 @@ typedef struct _GLFWwindowWayland
         _GLFWdecorationWayland             top, left, right, bottom;
         int                                focus;
     } decorations;
-
 } _GLFWwindowWayland;
 
 // Wayland-specific global data
@@ -249,8 +246,10 @@ typedef struct _GLFWlibraryWayland
     struct wl_cursor_theme*     cursorTheme;
     struct wl_cursor_theme*     cursorThemeHiDPI;
     struct wl_surface*          cursorSurface;
+    const char*                 cursorPreviousName;
     int                         cursorTimerfd;
     uint32_t                    serial;
+    uint32_t                    pointerEnterSerial;
 
     int32_t                     keyboardRepeatRate;
     int32_t                     keyboardRepeatDelay;
@@ -324,7 +323,6 @@ typedef struct _GLFWlibraryWayland
         PFN_wl_egl_window_destroy window_destroy;
         PFN_wl_egl_window_resize window_resize;
     } egl;
-
 } _GLFWlibraryWayland;
 
 // Wayland-specific per-monitor data
@@ -332,13 +330,12 @@ typedef struct _GLFWlibraryWayland
 typedef struct _GLFWmonitorWayland
 {
     struct wl_output*           output;
-    int                         name;
+    uint32_t                    name;
     int                         currentMode;
 
     int                         x;
     int                         y;
     int                         scale;
-
 } _GLFWmonitorWayland;
 
 // Wayland-specific per-cursor data

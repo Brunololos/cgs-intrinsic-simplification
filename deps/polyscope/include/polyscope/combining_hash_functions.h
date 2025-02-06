@@ -1,4 +1,5 @@
-// Copyright 2017-2019, Nicholas Sharp and the Polyscope contributors. http://polyscope.run.
+// Copyright 2017-2023, Nicholas Sharp and the Polyscope contributors. https://polyscope.run
+
 #pragma once
 
 #include <array>
@@ -62,6 +63,19 @@ struct hash<std::pair<T, U>> {
     size_t hVal = std::hash<T>()(x.first);
     hash_combine<U>(hVal, x.second);
     return hVal;
+  }
+};
+
+// Hash for arrays
+template <class T, size_t N>
+struct hash<std::array<T, N>> {
+  std::size_t operator()(const std::array<T, N>& arr) const {
+    std::hash<T> hasher;
+    size_t result = 0;
+    for (size_t i = 0; i < N; i++) {
+      hash_combine(result, arr[i]);
+    }
+    return result;
   }
 };
 

@@ -1,22 +1,23 @@
-// Copyright 2017-2019, Nicholas Sharp and the Polyscope contributors. http://polyscope.run.
+// Copyright 2017-2023, Nicholas Sharp and the Polyscope contributors. https://polyscope.run
+
 #pragma once
 
 #include "glm/glm.hpp"
 
 namespace polyscope {
 
-inline gl::ColorMapID defaultColorMap(DataType type) {
+inline std::string defaultColorMap(DataType type) {
   switch (type) {
   case DataType::STANDARD:
-    return gl::ColorMapID::VIRIDIS;
+    return "viridis";
     break;
   case DataType::SYMMETRIC:
-    return gl::ColorMapID::COOLWARM;
+    return "coolwarm";
   case DataType::MAGNITUDE:
-    return gl::ColorMapID::BLUES;
+    return "blues";
     break;
   }
-  return gl::ColorMapID::VIRIDIS;
+  return "viridis";
 }
 
 // Helpers used mainy to treat vectors as fields

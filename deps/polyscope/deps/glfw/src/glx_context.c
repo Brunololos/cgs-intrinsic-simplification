@@ -24,6 +24,8 @@
 //    distribution.
 //
 //========================================================================
+// It is fine to use C99 in this file because it will not be built with VS
+//========================================================================
 
 #include "internal.h"
 
@@ -90,6 +92,9 @@ static GLFWbool chooseGLXFBConfig(const _GLFWfbconfig* desired,
                 continue;
         }
 
+        if (getGLXFBConfigAttrib(n, GLX_DOUBLEBUFFER) != desired->doublebuffer)
+            continue;
+
         if (desired->transparent)
         {
             XVisualInfo* vi = glXGetVisualFromFBConfig(_glfw.x11.display, n);
@@ -117,8 +122,6 @@ static GLFWbool chooseGLXFBConfig(const _GLFWfbconfig* desired,
 
         if (getGLXFBConfigAttrib(n, GLX_STEREO))
             u->stereo = GLFW_TRUE;
-        if (getGLXFBConfigAttrib(n, GLX_DOUBLEBUFFER))
-            u->doublebuffer = GLFW_TRUE;
 
         if (_glfw.glx.ARB_multisample)
             u->samples = getGLXFBConfigAttrib(n, GLX_SAMPLES);
@@ -226,8 +229,6 @@ static GLFWglproc getProcAddressGLX(const char* procname)
         return _glfw_dlsym(_glfw.glx.handle, procname);
 }
 
-// Destroy the OpenGL context
-//
 static void destroyContextGLX(_GLFWwindow* window)
 {
     if (window->context.glx.window)
@@ -673,7 +674,7 @@ GLFWAPI GLXContext glfwGetGLXContext(GLFWwindow* handle)
     _GLFWwindow* window = (_GLFWwindow*) handle;
     _GLFW_REQUIRE_INIT_OR_RETURN(NULL);
 
-    if (window->context.client == GLFW_NO_API)
+    if (window->context.source != GLFW_NATIVE_CONTEXT_API)
     {
         _glfwInputError(GLFW_NO_WINDOW_CONTEXT, NULL);
         return NULL;
@@ -687,7 +688,7 @@ GLFWAPI GLXWindow glfwGetGLXWindow(GLFWwindow* handle)
     _GLFWwindow* window = (_GLFWwindow*) handle;
     _GLFW_REQUIRE_INIT_OR_RETURN(None);
 
-    if (window->context.client == GLFW_NO_API)
+    if (window->context.source != GLFW_NATIVE_CONTEXT_API)
     {
         _glfwInputError(GLFW_NO_WINDOW_CONTEXT, NULL);
         return None;

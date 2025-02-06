@@ -15,6 +15,7 @@
 #include "isimp.hpp"
 #include "screenshot.hpp"
 #include "lscm_wrapper.hpp"
+#include "query_texture_barycentrics.hpp"
 
 typedef Eigen::Matrix<unsigned char, Eigen::Dynamic, Eigen::Dynamic> MatrixXuc;
 
@@ -44,6 +45,7 @@ int main(int argc, char *argv[])
   MatrixXuc R, G, B, A;
   int TEXTURE_WIDTH = 1000;
   int TEXTURE_HEIGHT = 1000;
+  std::vector<unsigned char> polyscope_texture = std::vector<unsigned char>();
 
   // int dot_pos = ((std::string) argv[1]).find_last_of('.');
   // std::cout << ((std::string) argv[1]).substr(dot_pos) << std::endl;
@@ -55,14 +57,7 @@ int main(int argc, char *argv[])
   // {
   //   igl::read_triangle_mesh(argv[1], V, F);
   // }
-  // igl::read_triangle_mesh(filename, V, F);
   igl::readOBJ(argv[1], V, UV, NV, F, UF, NF);
-
-  // Eigen::MatrixXd bary_coords; iSIMPData.tracked_points
-  // Eigen::VectorXi bary_faces;  which face each pixel lies in. I instead registered the 
-  // Eigen::Matrix<bool, Dynamic, 1> hit_mask;
-  // if (using_texture)
-  //     query_texture_barycentric(UV, UF, TEXTURE_WIDTH, bary_faces, bary_coords, hit_mask);
 
   // modified vertices & faces
   Eigen::MatrixXd U = V;
@@ -88,14 +83,6 @@ int main(int argc, char *argv[])
   std::ofstream logFile;                     // logfile
   bool doLogging = false;
 
-  // Viewer
-  // igl::opengl::glfw::Viewer viewer;
-  // igl::opengl::glfw::imgui::ImGuiPlugin plugin;
-
-  // TODO:
-  // Eigen::Matrix<unsigned char,Eigen::Dynamic,Eigen::Dynamic> R,G,B,A;
-  // igl::png::readPNG(argc > 2 ? argv[2] : "../textures/texture.png", R,G,B,A);
-  // igl::png::readPNG("../textures/deformedCube (during optimisation).png", R,G,B,A);
   R = 255 * MatrixXuc::Ones(TEXTURE_WIDTH, TEXTURE_HEIGHT);
   G = 255 * MatrixXuc::Ones(TEXTURE_WIDTH, TEXTURE_HEIGHT);
   B = 255 * MatrixXuc::Ones(TEXTURE_WIDTH, TEXTURE_HEIGHT);
@@ -112,8 +99,7 @@ int main(int argc, char *argv[])
                             //  245.0/255.0,152.0/255.0,0.0/255.0,  // 6 orange
                             //  224.0/255.0,18.0/255.0,0.0/255.0,   // 7 red
                             //  220.0/255.0,13.0/255.0,255.0/255.0  // 8 magenta
-                            1,
-                        1, 1,                                       // 0 white
+                        1, 1, 1,                                    // 1 white
                         178.0 / 255.0, 31.0 / 255.0, 53.0 / 255.0,  // 1 dark red
                         216.0 / 255.0, 39.0 / 255.0, 53.0 / 255.0,  // 2 light red
                         255.0 / 255.0, 116.0 / 255.0, 53.0 / 255.0, // 3 orange
@@ -199,8 +185,10 @@ int main(int argc, char *argv[])
     }
   };
 
-  // auto init_viewer_data = [&]()
-  // {
+  auto init_viewer_data = [&]()
+  {
+    // polyscope_texture = std::vector<unsigned char>(4 * TEXTURE_WIDTH * TEXTURE_HEIGHT);
+    polyscope_texture.resize(4 * TEXTURE_WIDTH * TEXTURE_HEIGHT);
   //   // prev face-based coloring: viewer.data().set_face_based(true);
   //   // viewer.data().set_texture(R,G,B,A);
   //   // viewer.data().set_colors(C);
@@ -214,7 +202,7 @@ int main(int argc, char *argv[])
   //   viewer.data().point_size = 15;
   //   viewer.data().line_width = 1;
   //   viewer.data().show_lines = F.rows() < 20000;
-  // };
+  };
 
   // Selection
   bool translate = false;
@@ -272,6 +260,10 @@ int main(int argc, char *argv[])
         R(texcoord[0], texcoord[1]) = CM((i % num_colors) + 1, 0) * 255;
         G(texcoord[0], texcoord[1]) = CM((i % num_colors) + 1, 1) * 255;
         B(texcoord[0], texcoord[1]) = CM((i % num_colors) + 1, 2) * 255;
+        polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 0] = CM((i % num_colors) + 1, 0) * 255;
+        polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 1] = CM((i % num_colors) + 1, 1) * 255;
+        polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 2] = CM((i % num_colors) + 1, 2) * 255;
+        polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 3] = 255;
         // std::cout << "Setting texcoord: (" << texcoord[0] << ", " << texcoord[1] << "): R=" << CM(i%9, 0) << ", G=" << CM(i%9, 1) << ", B=" << CM(i%9, 2) << std::endl;
       }
     }
@@ -320,8 +312,8 @@ int main(int argc, char *argv[])
   {
     // viewer.data().clear();
     // viewer.data().set_mesh(U, H);
-    // init_viewer_data();
-    // update_texture();
+    init_viewer_data();
+    update_texture();
     // update_points();
     // viewer.draw();
   };
@@ -330,8 +322,8 @@ int main(int argc, char *argv[])
   auto refresh_mesh_vertices = [&]()
   {
     // viewer.data().set_vertices(U);
-    // init_viewer_data();
-    // update_texture();
+    init_viewer_data();
+    update_texture();
     // update_points();
     // viewer.draw();
   };
@@ -771,30 +763,34 @@ int main(int argc, char *argv[])
   // double absmax = std::max(UV.maxCoeff(), -UV.minCoeff());
   // // transforming UV's to range from [0, 1]
   // UV = (UV / absmax + Eigen::MatrixXd::Ones(UV.rows(), UV.cols())) / 2.0;
-  register_texels();
+  // register_texels();
+  query_texture_barycentrics(UV, UF, TEXTURE_WIDTH, TEXTURE_HEIGHT, iSData);
   // // THese are inserted:
-  // map_registered(iSData);
+  map_registered(iSData);
   // update_texture();
   // std::cout << "write_success: " << igl::png::writePNG(R, G, B, A, "H:/GIT/cgs-intrinsic-simplification/textures/object_texture.png") << std::endl;
   // // end insertion
-  // init_viewer_data();
+  init_viewer_data();
+  update_texture();
   // viewer.core().is_animating = true;
   // viewer.core().background_color.head(3) = CM.row(0).head(3).cast<float>();
   // // update_points()
   // viewer.launch();
 
   // while (!iSData.hasConverged && iSData.intrinsicMesh->nVertices() > coarsen_to_n_vertices)
-  // {
-  //   // make simplification step
-  //   iSimp_step(iSData);
-  //   map_registered(iSData);
-  //   update_texture();
-  // }
+  while (!iSData.hasConverged)
+  {
+    // make simplification step
+    iSimp_step(iSData);
+  }
+  int min_n_vertices = iSData.intrinsicMesh->nVertices();
+
+  map_registered(iSData);
+  update_texture();
 
   polyscope::init();
-  auto psMesh  = polyscope::registerSurfaceMesh("input mesh", V, F);
+  polyscope::SurfaceMesh* psMesh  = polyscope::registerSurfaceMesh("input mesh", V, F);
 
-  // TODO:
   if (using_texture) {
     // convert parameterization to polyscope's desired input format
     Eigen::Matrix<glm::vec2, Eigen::Dynamic, 1> parameterization(3 * UF.rows());
@@ -804,11 +800,13 @@ int main(int argc, char *argv[])
       }
     }
     polyscope::SurfaceCornerParameterizationQuantity* q = psMesh->addParameterizationQuantity("intrinsic triangulation", parameterization);
-    // q->program->setTexture2D("iSIMP texture", texture, TEXTURE_WIDTH, TEXTURE_HEIGHT);
-    // q->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, texture, polyscope::TextureFormat::RGBA8);
-    // q->setEnabled(true);
-    // q->setStyle(polyscope::ParamVizStyle::TEXTURE);
-    // q->setCheckerSize(1);
+
+    q->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, polyscope_texture, polyscope::TextureFormat::RGBA8);
+    q->setEnabled(true);
+    q->setStyle(polyscope::ParamVizStyle::TEXTURE);
+    q->setCheckerSize(1);
   }
+
+  // polyscope::state::userCallback = callback;
   polyscope::show();
 }

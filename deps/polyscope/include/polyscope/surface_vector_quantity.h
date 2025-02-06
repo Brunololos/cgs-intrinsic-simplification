@@ -1,10 +1,11 @@
-// Copyright 2017-2019, Nicholas Sharp and the Polyscope contributors. http://polyscope.run.
+// Copyright 2017-2023, Nicholas Sharp and the Polyscope contributors. https://polyscope.run
+
 #pragma once
 
 #include "polyscope/affine_remapper.h"
-#include "polyscope/ribbon_artist.h"
+#include "polyscope/render/engine.h"
 #include "polyscope/surface_mesh.h"
-#include "polyscope/surface_mesh_enums.h"
+#include "polyscope/vector_quantity.h"
 
 namespace polyscope {
 
@@ -12,55 +13,33 @@ namespace polyscope {
 
 // Represents a general vector field associated with a surface mesh, including
 // R3 fields in the ambient space and R2 fields embedded in the surface
+
+// NOTE: This intermediate class is not really necessary anymore; it is subsumed by the VectorQuantity<> classes which
+// serve as common bases for ALL vector types. At this point it is just kept around for backward compatibility, to not
+// break user code which holds a reference to it.
 class SurfaceVectorQuantity : public SurfaceMeshQuantity {
 public:
-  SurfaceVectorQuantity(std::string name, SurfaceMesh& mesh_, MeshElement definedOn_,
-                        VectorType vectorType_ = VectorType::STANDARD);
-
-
-  virtual void draw() override;
-  virtual void buildCustomUI() override;
-
-  // Allow children to append to the UI
-  virtual void drawSubUI();
+  SurfaceVectorQuantity(std::string name, SurfaceMesh& mesh_, MeshElement definedOn_);
 
   // === Members
-  const VectorType vectorType;
-  std::vector<glm::vec3> vectorRoots;
-  std::vector<glm::vec3> vectors;
-  float lengthMult; // longest vector will be this fraction of lengthScale (if not ambient)
-  float radiusMult; // radius is this fraction of lengthScale
-  glm::vec3 vectorColor;
-  MeshElement definedOn;
 
-  // A ribbon viz that is appropriate for some fields
-  std::unique_ptr<RibbonArtist> ribbonArtist;
-  bool ribbonEnabled = false;
-
-  // The map that takes values to [0,1] for drawing
-  AffineRemapper<glm::vec3> mapper;
-
-  void writeToFile(std::string filename = "");
-
-  // GL things
-  void prepareProgram();
-  std::unique_ptr<gl::GLProgram> program;
+  // === Option accessors
 
 protected:
-  // Set up the mapper for vectors
-  void prepareVectorMapper();
+  MeshElement definedOn;
 };
 
 
 // ==== R3 vectors at vertices
 
-class SurfaceVertexVectorQuantity : public SurfaceVectorQuantity {
+class SurfaceVertexVectorQuantity : public SurfaceVectorQuantity, public VectorQuantity<SurfaceVertexVectorQuantity> {
 public:
   SurfaceVertexVectorQuantity(std::string name, std::vector<glm::vec3> vectors_, SurfaceMesh& mesh_,
                               VectorType vectorType_ = VectorType::STANDARD);
 
-  std::vector<glm::vec3> vectorField;
-
+  virtual void draw() override;
+  virtual void buildCustomUI() override;
+  virtual void refresh() override;
   virtual std::string niceName() override;
   virtual void buildVertexInfoGUI(size_t vInd) override;
 };
@@ -68,73 +47,70 @@ public:
 
 // ==== R3 vectors at faces
 
-class SurfaceFaceVectorQuantity : public SurfaceVectorQuantity {
+class SurfaceFaceVectorQuantity : public SurfaceVectorQuantity, public VectorQuantity<SurfaceFaceVectorQuantity> {
 public:
   SurfaceFaceVectorQuantity(std::string name, std::vector<glm::vec3> vectors_, SurfaceMesh& mesh_,
                             VectorType vectorType_ = VectorType::STANDARD);
 
-  std::vector<glm::vec3> vectorField;
-
+  virtual void draw() override;
+  virtual void buildCustomUI() override;
+  virtual void refresh() override;
   virtual std::string niceName() override;
   virtual void buildFaceInfoGUI(size_t fInd) override;
 };
 
+// ==== Tangent vectors at faces
 
-// ==== Intrinsic vectors at faces
-
-class SurfaceFaceIntrinsicVectorQuantity : public SurfaceVectorQuantity {
+class SurfaceFaceTangentVectorQuantity : public SurfaceVectorQuantity,
+                                         public TangentVectorQuantity<SurfaceFaceTangentVectorQuantity> {
 public:
-  SurfaceFaceIntrinsicVectorQuantity(std::string name, std::vector<glm::vec2> vectors_, SurfaceMesh& mesh_,
-                                     int nSym = 1, VectorType vectorType_ = VectorType::STANDARD);
-
-  int nSym;
-  std::vector<glm::vec2> vectorField;
+  SurfaceFaceTangentVectorQuantity(std::string name, std::vector<glm::vec2> vectors_, std::vector<glm::vec3> basisX_,
+                                   std::vector<glm::vec3> basisY_, SurfaceMesh& mesh_, int nSym = 1,
+                                   VectorType vectorType_ = VectorType::STANDARD);
 
   virtual void draw() override;
-
-  void drawSubUI() override;
-
+  virtual void buildCustomUI() override;
+  virtual void refresh() override;
   virtual std::string niceName() override;
   void buildFaceInfoGUI(size_t fInd) override;
 };
 
 
-// ==== Intrinsic vectors at vertices
+// ==== Tangent vectors at vertices
 
-class SurfaceVertexIntrinsicVectorQuantity : public SurfaceVectorQuantity {
+class SurfaceVertexTangentVectorQuantity : public SurfaceVectorQuantity,
+                                           public TangentVectorQuantity<SurfaceVertexTangentVectorQuantity> {
 public:
-  SurfaceVertexIntrinsicVectorQuantity(std::string name, std::vector<glm::vec2> vectors_, SurfaceMesh& mesh_,
-                                       int nSym = 1, VectorType vectorType_ = VectorType::STANDARD);
-
-  int nSym;
-  std::vector<glm::vec2> vectorField;
+  SurfaceVertexTangentVectorQuantity(std::string name, std::vector<glm::vec2> vectors_, std::vector<glm::vec3> basisX_,
+                                     std::vector<glm::vec3> basisY_, SurfaceMesh& mesh_, int nSym = 1,
+                                     VectorType vectorType_ = VectorType::STANDARD);
 
   virtual void draw() override;
+  virtual void buildCustomUI() override;
 
-  void drawSubUI() override;
-
+  virtual void refresh() override;
   virtual std::string niceName() override;
   void buildVertexInfoGUI(size_t vInd) override;
 };
 
 
-// ==== Intrinsic one form on edges
+// ==== Tangent one form on edges
 
-class SurfaceOneFormIntrinsicVectorQuantity : public SurfaceVectorQuantity {
+class SurfaceOneFormTangentVectorQuantity : public SurfaceVectorQuantity,
+                                            public TangentVectorQuantity<SurfaceOneFormTangentVectorQuantity> {
 public:
-  SurfaceOneFormIntrinsicVectorQuantity(std::string name, std::vector<double> oneForm_, std::vector<char> orientations_,
-                                        SurfaceMesh& mesh_);
-
-  std::vector<double> oneForm;
-  std::vector<glm::vec2> mappedVectorField;
+  SurfaceOneFormTangentVectorQuantity(std::string name, std::vector<double> oneForm_, std::vector<char> orientations_,
+                                      SurfaceMesh& mesh_);
 
   virtual void draw() override;
-
-  void drawSubUI() override;
-
+  virtual void buildCustomUI() override;
+  virtual void refresh() override;
   virtual std::string niceName() override;
+
+  std::vector<double> oneForm;
+  std::vector<char> canonicalOrientation;
+
   void buildEdgeInfoGUI(size_t eInd) override;
-  void buildFaceInfoGUI(size_t fInd) override;
 };
 
 } // namespace polyscope

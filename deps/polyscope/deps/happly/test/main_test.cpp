@@ -2,6 +2,8 @@
 
 #include <iostream>
 #include <string>
+#include <chrono>
+#include <random>
 
 #include "gtest/gtest.h"
 
@@ -57,6 +59,20 @@ TEST(TypedReadWriteTest, ReadWriteCharBinary) {
   std::vector<char> testDataBinary = plyInB.getElement("test_elem").getProperty<char>("test_data");
   EXPECT_EQ(testData, testDataBinary);
 }
+TEST(TypedReadWriteTest, ReadWriteCharBinarySwap) {
+
+  // Create a simple file
+  happly::PLYData plyOut;
+  plyOut.addElement("test_elem", 5);
+  std::vector<char> testData{-3, 4, 11, -12, 122};
+  plyOut.getElement("test_elem").addProperty<char>("test_data", testData);
+
+  // Binary read/write
+  plyOut.write("temp.ply", happly::DataFormat::BinaryBigEndian);
+  happly::PLYData plyInB("temp.ply");
+  std::vector<char> testDataBinary = plyInB.getElement("test_elem").getProperty<char>("test_data");
+  EXPECT_EQ(testData, testDataBinary);
+}
 
 // = unsigned char
 TEST(TypedReadWriteTest, ReadWriteUCharASCII) {
@@ -83,6 +99,20 @@ TEST(TypedReadWriteTest, ReadWriteUCharBinary) {
 
   // Binary read/write
   plyOut.write("temp.ply", happly::DataFormat::Binary);
+  happly::PLYData plyInB("temp.ply");
+  std::vector<unsigned char> testDataBinary = plyInB.getElement("test_elem").getProperty<unsigned char>("test_data");
+  EXPECT_EQ(testData, testDataBinary);
+}
+TEST(TypedReadWriteTest, ReadWriteUCharBinarySwap) {
+
+  // Create a simple file
+  happly::PLYData plyOut;
+  plyOut.addElement("test_elem", 5);
+  std::vector<unsigned char> testData{3, 0, 11, 255, 122};
+  plyOut.getElement("test_elem").addProperty<unsigned char>("test_data", testData);
+
+  // Binary read/write
+  plyOut.write("temp.ply", happly::DataFormat::BinaryBigEndian);
   happly::PLYData plyInB("temp.ply");
   std::vector<unsigned char> testDataBinary = plyInB.getElement("test_elem").getProperty<unsigned char>("test_data");
   EXPECT_EQ(testData, testDataBinary);
@@ -118,6 +148,20 @@ TEST(TypedReadWriteTest, ReadWriteShortBinary) {
   std::vector<short> testDataBinary = plyInB.getElement("test_elem").getProperty<short>("test_data");
   EXPECT_EQ(testData, testDataBinary);
 }
+TEST(TypedReadWriteTest, ReadWriteShortBinarySwap) {
+
+  // Create a simple file
+  happly::PLYData plyOut;
+  plyOut.addElement("test_elem", 5);
+  std::vector<short> testData{-3, 4, 32767, -32768, 122};
+  plyOut.getElement("test_elem").addProperty<short>("test_data", testData);
+
+  // Binary read/write
+  plyOut.write("temp.ply", happly::DataFormat::BinaryBigEndian);
+  happly::PLYData plyInB("temp.ply");
+  std::vector<short> testDataBinary = plyInB.getElement("test_elem").getProperty<short>("test_data");
+  EXPECT_EQ(testData, testDataBinary);
+}
 
 // = unsigned short
 TEST(TypedReadWriteTest, ReadWriteUShortASCII) {
@@ -144,6 +188,20 @@ TEST(TypedReadWriteTest, ReadWriteUShortBinary) {
 
   // Binary read/write
   plyOut.write("temp.ply", happly::DataFormat::Binary);
+  happly::PLYData plyInB("temp.ply");
+  std::vector<unsigned short> testDataBinary = plyInB.getElement("test_elem").getProperty<unsigned short>("test_data");
+  EXPECT_EQ(testData, testDataBinary);
+}
+TEST(TypedReadWriteTest, ReadWriteUShortBinarySwap) {
+
+  // Create a simple file
+  happly::PLYData plyOut;
+  plyOut.addElement("test_elem", 5);
+  std::vector<unsigned short> testData{3, 0, 11, 65535, 122};
+  plyOut.getElement("test_elem").addProperty<unsigned short>("test_data", testData);
+
+  // Binary read/write
+  plyOut.write("temp.ply", happly::DataFormat::BinaryBigEndian);
   happly::PLYData plyInB("temp.ply");
   std::vector<unsigned short> testDataBinary = plyInB.getElement("test_elem").getProperty<unsigned short>("test_data");
   EXPECT_EQ(testData, testDataBinary);
@@ -178,6 +236,20 @@ TEST(TypedReadWriteTest, ReadWriteIntBinary) {
   std::vector<int> testDataBinary = plyInB.getElement("test_elem").getProperty<int>("test_data");
   EXPECT_EQ(testData, testDataBinary);
 }
+TEST(TypedReadWriteTest, ReadWriteIntBinarySwap) {
+
+  // Create a simple file
+  happly::PLYData plyOut;
+  plyOut.addElement("test_elem", 5);
+  std::vector<int> testData{-3, 0, 2147483647, -2147483647 - 1, 122};
+  plyOut.getElement("test_elem").addProperty<int>("test_data", testData);
+
+  // Binary read/write
+  plyOut.write("temp.ply", happly::DataFormat::BinaryBigEndian);
+  happly::PLYData plyInB("temp.ply");
+  std::vector<int> testDataBinary = plyInB.getElement("test_elem").getProperty<int>("test_data");
+  EXPECT_EQ(testData, testDataBinary);
+}
 
 // = unsigned int
 TEST(TypedReadWriteTest, ReadWriteUIntASCII) {
@@ -204,6 +276,20 @@ TEST(TypedReadWriteTest, ReadWriteUIntBinary) {
 
   // Binary read/write
   plyOut.write("temp.ply", happly::DataFormat::Binary);
+  happly::PLYData plyInB("temp.ply");
+  std::vector<unsigned int> testDataBinary = plyInB.getElement("test_elem").getProperty<unsigned int>("test_data");
+  EXPECT_EQ(testData, testDataBinary);
+}
+TEST(TypedReadWriteTest, ReadWriteUIntBinarySwap) {
+
+  // Create a simple file
+  happly::PLYData plyOut;
+  plyOut.addElement("test_elem", 5);
+  std::vector<unsigned int> testData{3, 0, 4294967295, 15, 122};
+  plyOut.getElement("test_elem").addProperty<unsigned int>("test_data", testData);
+
+  // Binary read/write
+  plyOut.write("temp.ply", happly::DataFormat::BinaryBigEndian);
   happly::PLYData plyInB("temp.ply");
   std::vector<unsigned int> testDataBinary = plyInB.getElement("test_elem").getProperty<unsigned int>("test_data");
   EXPECT_EQ(testData, testDataBinary);
@@ -258,6 +344,32 @@ TEST(TypedReadWriteTest, ReadWriteFloatBinary) {
 
   // ASCII read/write
   plyOut.write("temp.ply", happly::DataFormat::Binary);
+  happly::PLYData plyIn("temp.ply");
+  std::vector<float> testDataBinary = plyIn.getElement("test_elem").getProperty<float>("test_data");
+  EXPECT_EQ(testData, testDataBinary);
+}
+TEST(TypedReadWriteTest, ReadWriteFloatBinarySwap) {
+
+  // Create a simple file
+  happly::PLYData plyOut;
+  std::vector<float> testData{
+      3.141592653589793238f,
+      -3.141592653589793238f,
+      std::numeric_limits<float>::min(),
+      std::numeric_limits<float>::max(),
+      std::numeric_limits<float>::lowest(),
+      std::numeric_limits<float>::epsilon(),
+      std::numeric_limits<float>::infinity(),
+      -std::numeric_limits<float>::infinity(),
+      0.0f,
+      -0.0f,
+      1e24f,
+  };
+  plyOut.addElement("test_elem", testData.size());
+  plyOut.getElement("test_elem").addProperty<float>("test_data", testData);
+
+  // ASCII read/write
+  plyOut.write("temp.ply", happly::DataFormat::BinaryBigEndian);
   happly::PLYData plyIn("temp.ply");
   std::vector<float> testDataBinary = plyIn.getElement("test_elem").getProperty<float>("test_data");
   EXPECT_EQ(testData, testDataBinary);
@@ -317,6 +429,32 @@ TEST(TypedReadWriteTest, ReadWriteDoubleBinary) {
   std::vector<double> testDataBinary = plyIn.getElement("test_elem").getProperty<double>("test_data");
   EXPECT_EQ(testData, testDataBinary);
 }
+TEST(TypedReadWriteTest, ReadWriteDoubleBinarySwap) {
+
+  // Create a simple file
+  happly::PLYData plyOut;
+  std::vector<double> testData{
+      3.141592653589793238,
+      -3.141592653589793238,
+      std::numeric_limits<double>::min(),
+      std::numeric_limits<double>::max(),
+      std::numeric_limits<double>::lowest(),
+      std::numeric_limits<double>::epsilon(),
+      std::numeric_limits<double>::infinity(),
+      -std::numeric_limits<double>::infinity(),
+      0.0,
+      -0.0,
+      1e24,
+  };
+  plyOut.addElement("test_elem", testData.size());
+  plyOut.getElement("test_elem").addProperty<double>("test_data", testData);
+
+  // ASCII read/write
+  plyOut.write("temp.ply", happly::DataFormat::BinaryBigEndian);
+  happly::PLYData plyIn("temp.ply");
+  std::vector<double> testDataBinary = plyIn.getElement("test_elem").getProperty<double>("test_data");
+  EXPECT_EQ(testData, testDataBinary);
+}
 
 
 // = signed char list
@@ -344,10 +482,34 @@ TEST(TypedListReadWriteTest, ReadWriteCharBinary) {
   std::vector<std::vector<char>> testData{
       {3}, {3, 0, 11, -128, 127}, {}, {}, {3, 11},
   };
+  std::cout << "size: " << testData.size() << std::endl;
+  for(auto& v : testData) {
+    std::cout << "sub size: " << v.size() << std::endl;
+  }
   plyOut.getElement("test_elem").addListProperty<char>("test_data", testData);
 
   // ASCII read/write
   plyOut.write("temp.ply", happly::DataFormat::Binary);
+  happly::PLYData plyIn("temp.ply");
+  std::vector<std::vector<char>> testDataBinary = plyIn.getElement("test_elem").getListProperty<char>("test_data");
+  std::cout << "size: " << testDataBinary.size() << std::endl;
+  for(auto& v : testDataBinary) {
+    std::cout << "sub size: " << v.size() << std::endl;
+  }
+  EXPECT_EQ(testData, testDataBinary);
+}
+TEST(TypedListReadWriteTest, ReadWriteCharBinarySwap) {
+
+  // Create a simple file
+  happly::PLYData plyOut;
+  plyOut.addElement("test_elem", 5);
+  std::vector<std::vector<char>> testData{
+      {3}, {3, 0, 11, -128, 127}, {}, {}, {3, 11},
+  };
+  plyOut.getElement("test_elem").addListProperty<char>("test_data", testData);
+
+  // ASCII read/write
+  plyOut.write("temp.ply", happly::DataFormat::BinaryBigEndian);
   happly::PLYData plyIn("temp.ply");
   std::vector<std::vector<char>> testDataBinary = plyIn.getElement("test_elem").getListProperty<char>("test_data");
   EXPECT_EQ(testData, testDataBinary);
@@ -388,6 +550,23 @@ TEST(TypedListReadWriteTest, ReadWriteUCharBinary) {
       plyIn.getElement("test_elem").getListProperty<unsigned char>("test_data");
   EXPECT_EQ(testData, testDataBinary);
 }
+TEST(TypedListReadWriteTest, ReadWriteUCharBinarySwap) {
+
+  // Create a simple file
+  happly::PLYData plyOut;
+  plyOut.addElement("test_elem", 5);
+  std::vector<std::vector<unsigned char>> testData{
+      {3}, {3, 0, 11, 255, 122}, {}, {}, {3, 11},
+  };
+  plyOut.getElement("test_elem").addListProperty<unsigned char>("test_data", testData);
+
+  // ASCII read/write
+  plyOut.write("temp.ply", happly::DataFormat::BinaryBigEndian);
+  happly::PLYData plyIn("temp.ply");
+  std::vector<std::vector<unsigned char>> testDataBinary =
+      plyIn.getElement("test_elem").getListProperty<unsigned char>("test_data");
+  EXPECT_EQ(testData, testDataBinary);
+}
 
 
 // = signed short list
@@ -423,6 +602,22 @@ TEST(TypedListReadWriteTest, ReadWriteShortBinary) {
   std::vector<std::vector<short>> testDataBinary = plyIn.getElement("test_elem").getListProperty<short>("test_data");
   EXPECT_EQ(testData, testDataBinary);
 }
+TEST(TypedListReadWriteTest, ReadWriteShortBinarySwap) {
+
+  // Create a simple file
+  happly::PLYData plyOut;
+  plyOut.addElement("test_elem", 5);
+  std::vector<std::vector<short>> testData{
+      {3}, {-3, 4, 32767, -32768, 122}, {}, {}, {3, 11},
+  };
+  plyOut.getElement("test_elem").addListProperty<short>("test_data", testData);
+
+  // ASCII read/write
+  plyOut.write("temp.ply", happly::DataFormat::BinaryBigEndian);
+  happly::PLYData plyIn("temp.ply");
+  std::vector<std::vector<short>> testDataBinary = plyIn.getElement("test_elem").getListProperty<short>("test_data");
+  EXPECT_EQ(testData, testDataBinary);
+}
 
 // = unsigned short list
 TEST(TypedListReadWriteTest, ReadWriteUShortASCII) {
@@ -443,6 +638,23 @@ TEST(TypedListReadWriteTest, ReadWriteUShortASCII) {
   EXPECT_EQ(testData, testDataASCII);
 }
 TEST(TypedListReadWriteTest, ReadWriteUShortBinary) {
+
+  // Create a simple file
+  happly::PLYData plyOut;
+  plyOut.addElement("test_elem", 5);
+  std::vector<std::vector<unsigned short>> testData{
+      {3}, {3, 0, 11, 65535, 122}, {}, {}, {3, 11},
+  };
+  plyOut.getElement("test_elem").addListProperty<unsigned short>("test_data", testData);
+
+  // ASCII read/write
+  plyOut.write("temp.ply", happly::DataFormat::Binary);
+  happly::PLYData plyIn("temp.ply");
+  std::vector<std::vector<unsigned short>> testDataBinary =
+      plyIn.getElement("test_elem").getListProperty<unsigned short>("test_data");
+  EXPECT_EQ(testData, testDataBinary);
+}
+TEST(TypedListReadWriteTest, ReadWriteUShortBinarySwap) {
 
   // Create a simple file
   happly::PLYData plyOut;
@@ -494,6 +706,22 @@ TEST(TypedListReadWriteTest, ReadWriteIntBinary) {
   std::vector<std::vector<int>> testDataBinary = plyIn.getElement("test_elem").getListProperty<int>("test_data");
   EXPECT_EQ(testData, testDataBinary);
 }
+TEST(TypedListReadWriteTest, ReadWriteIntBinarySwap) {
+
+  // Create a simple file
+  happly::PLYData plyOut;
+  plyOut.addElement("test_elem", 5);
+  std::vector<std::vector<int>> testData{
+      {3}, {-3, 0, 2147483647, -2147483647 - 1, 122}, {}, {}, {3, 11},
+  };
+  plyOut.getElement("test_elem").addListProperty<int>("test_data", testData);
+
+  // ASCII read/write
+  plyOut.write("temp.ply", happly::DataFormat::BinaryBigEndian);
+  happly::PLYData plyIn("temp.ply");
+  std::vector<std::vector<int>> testDataBinary = plyIn.getElement("test_elem").getListProperty<int>("test_data");
+  EXPECT_EQ(testData, testDataBinary);
+}
 
 // = unsigned int list
 TEST(TypedListReadWriteTest, ReadWriteUIntASCII) {
@@ -525,6 +753,23 @@ TEST(TypedListReadWriteTest, ReadWriteUIntBinary) {
 
   // ASCII read/write
   plyOut.write("temp.ply", happly::DataFormat::Binary);
+  happly::PLYData plyIn("temp.ply");
+  std::vector<std::vector<unsigned int>> testDataBinary =
+      plyIn.getElement("test_elem").getListProperty<unsigned int>("test_data");
+  EXPECT_EQ(testData, testDataBinary);
+}
+TEST(TypedListReadWriteTest, ReadWriteUIntBinarySwap) {
+
+  // Create a simple file
+  happly::PLYData plyOut;
+  plyOut.addElement("test_elem", 5);
+  std::vector<std::vector<unsigned int>> testData{
+      {3}, {3, 0, 4294967295, 15, 122}, {}, {}, {3, 11},
+  };
+  plyOut.getElement("test_elem").addListProperty<unsigned int>("test_data", testData);
+
+  // ASCII read/write
+  plyOut.write("temp.ply", happly::DataFormat::BinaryBigEndian);
   happly::PLYData plyIn("temp.ply");
   std::vector<std::vector<unsigned int>> testDataBinary =
       plyIn.getElement("test_elem").getListProperty<unsigned int>("test_data");
@@ -593,6 +838,36 @@ TEST(TypedListReadWriteTest, ReadWriteFloatBinary) {
   std::vector<std::vector<float>> testDataBinary = plyIn.getElement("test_elem").getListProperty<float>("test_data");
   EXPECT_EQ(testData, testDataBinary);
 }
+TEST(TypedListReadWriteTest, ReadWriteFloatBinarySwap) {
+
+  // Create a simple file
+  happly::PLYData plyOut;
+  plyOut.addElement("test_elem", 5);
+  std::vector<std::vector<float>> testData{
+      {3.f, 14.44f, 42.4242f},
+      {
+          3.141592653589793238f,
+          -3.141592653589793238f,
+          std::numeric_limits<float>::min(),
+          std::numeric_limits<float>::max(),
+          std::numeric_limits<float>::lowest(),
+          std::numeric_limits<float>::epsilon(),
+          0.0f,
+          -0.0f,
+          1e24f,
+      },
+      {},
+      {1.1f},
+      {-121.5f, 1.111f},
+  };
+  plyOut.getElement("test_elem").addListProperty<float>("test_data", testData);
+
+  // ASCII read/write
+  plyOut.write("temp.ply", happly::DataFormat::BinaryBigEndian);
+  happly::PLYData plyIn("temp.ply");
+  std::vector<std::vector<float>> testDataBinary = plyIn.getElement("test_elem").getListProperty<float>("test_data");
+  EXPECT_EQ(testData, testDataBinary);
+}
 
 // = double list
 TEST(TypedListReadWriteTest, ReadWriteDoubleASCII) {
@@ -651,6 +926,36 @@ TEST(TypedListReadWriteTest, ReadWriteDoubleBinary) {
 
   // ASCII read/write
   plyOut.write("temp.ply", happly::DataFormat::Binary);
+  happly::PLYData plyIn("temp.ply");
+  std::vector<std::vector<double>> testDataBinary = plyIn.getElement("test_elem").getListProperty<double>("test_data");
+  EXPECT_EQ(testData, testDataBinary);
+}
+TEST(TypedListReadWriteTest, ReadWriteDoubleBinarySwap) {
+
+  // Create a simple file
+  happly::PLYData plyOut;
+  plyOut.addElement("test_elem", 5);
+  std::vector<std::vector<double>> testData{
+      {3., 14.44, 42.4242},
+      {
+          3.141592653589793238,
+          -3.141592653589793238,
+          std::numeric_limits<double>::min(),
+          std::numeric_limits<double>::max(),
+          std::numeric_limits<double>::lowest(),
+          std::numeric_limits<double>::epsilon(),
+          0.0,
+          -0.0,
+          1e24,
+      },
+      {},
+      {1.1},
+      {-121.5, 1.111},
+  };
+  plyOut.getElement("test_elem").addListProperty<double>("test_data", testData);
+
+  // ASCII read/write
+  plyOut.write("temp.ply", happly::DataFormat::BinaryBigEndian);
   happly::PLYData plyIn("temp.ply");
   std::vector<std::vector<double>> testDataBinary = plyIn.getElement("test_elem").getListProperty<double>("test_data");
   EXPECT_EQ(testData, testDataBinary);
@@ -840,7 +1145,7 @@ TEST(TypePromotionTest, FaceIndThrow) {
 
   happly::PLYData ply;
   ply.addElement("face", 3);
-  std::vector<std::vector<uint64_t>> faceInds{{1, 3, 1L << 40}, {0, 2, 4, 5}, {1, 1, 1}};
+  std::vector<std::vector<uint64_t>> faceInds{{1, 3, 1LL << 40}, {0, 2, 4, 5}, {1, 1, 1}};
   EXPECT_THROW(ply.getElement("face").addListProperty("vertex_indices", faceInds), std::runtime_error);
 }
 
@@ -903,6 +1208,149 @@ TEST(MeshTest, ReadWriteBinaryMesh) {
 
   DoubleArrayVecEq(vPos, vPos2);
   EXPECT_EQ(fInd, fInd2);
+}
+
+TEST(MeshTest, ReadWriteBinarySwapMesh) {
+
+  // = Read in an interesting mesh file
+  happly::PLYData plyIn("../sampledata/platonic_shelf_big_endian.ply", false);
+  plyIn.validate();
+
+  std::vector<std::array<double, 3>> vPos = plyIn.getVertexPositions();
+  std::vector<std::vector<size_t>> fInd = plyIn.getFaceIndices();
+
+
+  // = Write out the mesh file
+  happly::PLYData plyOut;
+  plyOut.addVertexPositions(vPos);
+  plyOut.addFaceIndices(fInd);
+
+  plyOut.validate();
+  plyOut.write("temp.ply", happly::DataFormat::BinaryBigEndian);
+
+
+  // = Read the mesh file in again and make sure it hasn't changed
+  happly::PLYData plyIn2("temp.ply", false);
+  plyIn2.validate();
+
+  std::vector<std::array<double, 3>> vPos2 = plyIn2.getVertexPositions();
+  std::vector<std::vector<size_t>> fInd2 = plyIn2.getFaceIndices();
+
+  DoubleArrayVecEq(vPos, vPos2);
+  EXPECT_EQ(fInd, fInd2);
+}
+
+// === Test stream interfaces
+TEST(MeshTest, ReadWriteASCIIMeshStream) {
+
+  // = Read the PLY from an input stream
+  std::ifstream file ("../sampledata/platonic_shelf_ascii.ply");
+  happly::PLYData plyIn(file, false);
+  plyIn.validate();
+  file.close();
+
+  std::vector<std::array<double, 3>> vPos = plyIn.getVertexPositions();
+  std::vector<std::vector<size_t>> fInd = plyIn.getFaceIndices();
+
+
+  // = Write the mesh file to a stringstream
+  std::stringstream ioBuffer;
+  happly::PLYData plyOut;
+  plyOut.addVertexPositions(vPos);
+  plyOut.addFaceIndices(fInd);
+
+  plyOut.validate();
+
+  plyOut.write(ioBuffer);
+
+
+  // = Read the mesh file in again and make sure it hasn't changed
+  happly::PLYData plyIn2(ioBuffer, false);
+  plyIn2.validate();
+
+  std::vector<std::array<double, 3>> vPos2 = plyIn2.getVertexPositions();
+  std::vector<std::vector<size_t>> fInd2 = plyIn2.getFaceIndices();
+
+  DoubleArrayVecEq(vPos, vPos2);
+  EXPECT_EQ(fInd, fInd2);
+}
+
+TEST(MeshTest, ReadWriteBinaryMeshStream) {
+
+  // = Read in an interesting mesh file
+  std::ifstream file ("../sampledata/platonic_shelf_ascii.ply");
+  happly::PLYData plyIn(file, false);
+  plyIn.validate();
+  file.close();
+
+  std::vector<std::array<double, 3>> vPos = plyIn.getVertexPositions();
+  std::vector<std::vector<size_t>> fInd = plyIn.getFaceIndices();
+
+
+  // = Write out the mesh to a stringstream
+  std::stringstream ioBuffer;
+  happly::PLYData plyOut;
+  plyOut.addVertexPositions(vPos);
+  plyOut.addFaceIndices(fInd);
+
+  plyOut.validate();
+  plyOut.write(ioBuffer, happly::DataFormat::Binary);
+
+
+  // = Read the mesh file in again and make sure it hasn't changed
+  happly::PLYData plyIn2(ioBuffer, false);
+  plyIn2.validate();
+
+  std::vector<std::array<double, 3>> vPos2 = plyIn2.getVertexPositions();
+  std::vector<std::vector<size_t>> fInd2 = plyIn2.getFaceIndices();
+
+  DoubleArrayVecEq(vPos, vPos2);
+  EXPECT_EQ(fInd, fInd2);
+}
+
+
+TEST(PerfTest, WriteReadFloatList) {
+
+  // Parameters
+  size_t innerSizeMax = 10;
+  size_t N = 100000;
+
+  // Random number makers
+  std::mt19937 gen(777);
+  std::uniform_int_distribution<int> distInnerSize(1, innerSizeMax);
+  std::uniform_int_distribution<int> distValues(0, 1000000);
+
+  // Generate a long list of junk data
+  std::vector<std::vector<int>> testVals;
+  for (size_t i = 0; i < N; i++) {
+    size_t innerCount = distInnerSize(gen);
+    std::vector<int> innerVals;
+    for (size_t j = 0; j < innerCount; j++) {
+      int val = distValues(gen);
+      innerVals.push_back(val);
+    }
+    testVals.push_back(innerVals);
+  }
+
+  // Start timing
+  auto tStart = std::chrono::steady_clock::now();
+
+  // Create a ply file
+  happly::PLYData plyOut;
+  plyOut.addElement("testElem", N);
+  plyOut.getElement("testElem").addListProperty<int>("testVals", testVals);
+
+  // Write it to a stream
+  std::stringstream ioBuffer;
+  plyOut.write(ioBuffer, happly::DataFormat::Binary);
+
+  // = Read from stream
+  // (note that this DOES NOT actually access the property, but simply opening the stream parses everything)
+  happly::PLYData plyIn(ioBuffer, false);
+
+  // Finish timing
+  auto tEnd = std::chrono::steady_clock::now();
+  std::cout << "  time elapsed = " << std::chrono::duration_cast<std::chrono::microseconds>(tEnd - tStart).count() << "us" << std::endl;
 }
 
 

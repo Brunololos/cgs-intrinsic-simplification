@@ -1,76 +1,57 @@
-// Copyright 2017-2019, Nicholas Sharp and the Polyscope contributors. http://polyscope.run.
+// Copyright 2017-2023, Nicholas Sharp and the Polyscope contributors. https://polyscope.run
+
 #pragma once
 
-#include "polyscope/affine_remapper.h"
 #include "polyscope/curve_network.h"
-#include "polyscope/ribbon_artist.h"
+#include "polyscope/vector_quantity.h"
 
 namespace polyscope {
 
 // ==== Common base class
 
 // Represents a vector field associated with a curve network
+// NOTE: This intermediate class is not really necessary anymore; it is subsumed by the VectorQuantity<> classes which
+// serve as common bases for ALL vector types. At this point it is just kept around for backward compatibility, to not
+// break user code which holds a reference to it.
 class CurveNetworkVectorQuantity : public CurveNetworkQuantity {
 public:
-  CurveNetworkVectorQuantity(std::string name, CurveNetwork& network_, VectorType vectorType_ = VectorType::STANDARD);
+  CurveNetworkVectorQuantity(std::string name, CurveNetwork& network_);
 
-
-  virtual void draw() override;
-  virtual void buildCustomUI() override;
-
-  // Allow children to append to the UI
-  virtual void drawSubUI();
-
-  // === Members
-  const VectorType vectorType;
-  std::vector<glm::vec3> vectorRoots;
-  std::vector<glm::vec3> vectors;
-  float lengthMult; // longest vector will be this fraction of lengthScale (if not ambient)
-  float radiusMult; // radius is this fraction of lengthScale
-  glm::vec3 vectorColor;
-
-  // The map that takes values to [0,1] for drawing
-  AffineRemapper<glm::vec3> mapper;
-
-  void writeToFile(std::string filename = "");
-
-  // GL things
-  void prepareProgram();
-  std::unique_ptr<gl::GLProgram> program;
+  // === Option accessors
 
 protected:
-  // Set up the mapper for vectors
-  void prepareVectorMapper();
 };
 
 
 // ==== R3 vectors at nodes
 
-class CurveNetworkNodeVectorQuantity : public CurveNetworkVectorQuantity {
+class CurveNetworkNodeVectorQuantity : public CurveNetworkVectorQuantity,
+                                       public VectorQuantity<CurveNetworkNodeVectorQuantity> {
 public:
   CurveNetworkNodeVectorQuantity(std::string name, std::vector<glm::vec3> vectors_, CurveNetwork& network_,
                                  VectorType vectorType_ = VectorType::STANDARD);
 
-  std::vector<glm::vec3> vectorField;
-
+  virtual void draw() override;
+  virtual void buildCustomUI() override;
   virtual std::string niceName() override;
+  virtual void refresh() override;
   virtual void buildNodeInfoGUI(size_t vInd) override;
-  virtual void geometryChanged() override;
 };
 
 
 // ==== R3 vectors at edges
 
-class CurveNetworkEdgeVectorQuantity : public CurveNetworkVectorQuantity {
+class CurveNetworkEdgeVectorQuantity : public CurveNetworkVectorQuantity,
+                                       public VectorQuantity<CurveNetworkEdgeVectorQuantity> {
 public:
   CurveNetworkEdgeVectorQuantity(std::string name, std::vector<glm::vec3> vectors_, CurveNetwork& network_,
                                  VectorType vectorType_ = VectorType::STANDARD);
 
-  std::vector<glm::vec3> vectorField;
-
+  virtual void draw() override;
+  virtual void buildCustomUI() override;
   virtual std::string niceName() override;
-  virtual void buildEdgeInfoGUI(size_t fInd) override;
-  virtual void geometryChanged() override;
+  virtual void refresh() override;
+  virtual void buildEdgeInfoGUI(size_t vInd) override;
 };
 
 

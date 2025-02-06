@@ -1,7 +1,8 @@
-// Copyright 2017-2019, Nicholas Sharp and the Polyscope contributors. http://polyscope.run.
+// Copyright 2017-2023, Nicholas Sharp and the Polyscope contributors. https://polyscope.run
+
 #pragma once
 
-#include "polyscope/affine_remapper.h"
+#include "polyscope/color_quantity.h"
 #include "polyscope/curve_network.h"
 
 namespace polyscope {
@@ -10,20 +11,21 @@ namespace polyscope {
 class CurveNetworkMeshQuantity;
 class CurveNetwork;
 
-class CurveNetworkColorQuantity : public CurveNetworkQuantity {
+class CurveNetworkColorQuantity : public CurveNetworkQuantity, public ColorQuantity<CurveNetworkColorQuantity> {
 public:
-  CurveNetworkColorQuantity(std::string name, CurveNetwork& network_, std::string definedOn);
+  CurveNetworkColorQuantity(std::string name, CurveNetwork& network_, std::string definedOn,
+                            const std::vector<glm::vec3>& colorValues);
 
   virtual void draw() override;
   virtual std::string niceName() override;
 
-  virtual void geometryChanged() override;
+  virtual void refresh() override;
 
 protected:
   // UI internals
   const std::string definedOn;
-  std::unique_ptr<gl::GLProgram> nodeProgram;
-  std::unique_ptr<gl::GLProgram> edgeProgram;
+  std::shared_ptr<render::ShaderProgram> nodeProgram;
+  std::shared_ptr<render::ShaderProgram> edgeProgram;
 
   // Helpers
   virtual void createProgram() = 0;
@@ -40,9 +42,6 @@ public:
   virtual void createProgram() override;
 
   void buildNodeInfoGUI(size_t vInd) override;
-
-  // === Members
-  std::vector<glm::vec3> values;
 };
 
 // ========================================================
@@ -57,8 +56,11 @@ public:
 
   void buildEdgeInfoGUI(size_t eInd) override;
 
-  // === Members
-  std::vector<glm::vec3> values;
+  render::ManagedBuffer<glm::vec3> nodeAverageColors;
+  void updateNodeAverageColors();
+
+private:
+  std::vector<glm::vec3> nodeAverageColorsData;
 };
 
 } // namespace polyscope

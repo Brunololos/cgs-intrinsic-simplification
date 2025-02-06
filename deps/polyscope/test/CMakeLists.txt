@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10.0)
+cmake_minimum_required(VERSION 3.10.0...3.22)
 
 # Set up testing
 enable_testing()
@@ -12,11 +12,13 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 ### Configure the compiler
 
+# NOTE: Polyscope itself uses C++11, but the tests use C++14 because googletest requires it.
+
 if ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
 
   # using Clang (linux or apple) or GCC
   message("Using clang/gcc compiler flags")
-  SET(BASE_CXX_FLAGS "-std=c++11 -Wall -Wextra -Werror -g3")
+  SET(BASE_CXX_FLAGS "-std=c++14 -Wall -Wextra -g3") # use C++14 for tests only
   SET(DISABLED_WARNINGS " -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function -Wno-deprecated-declarations -Wno-missing-braces -Wno-unused-private-field")
   SET(TRACE_INCLUDES " -H -Wno-error=unused-command-line-argument")
 
@@ -31,8 +33,15 @@ if ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang" OR "${CMAKE_CXX_COMPILER_ID}" STR
   endif()
   
   SET(CMAKE_CXX_FLAGS "${BASE_CXX_FLAGS} ${DISABLED_WARNINGS}")
-  SET(CMAKE_CXX_FLAGS_DEBUG          "-g3")
-  SET(CMAKE_CXX_FLAGS_RELEASE        "-O3 -march=native -DNDEBUG")
+  SET(CMAKE_CXX_FLAGS_DEBUG          "${CMAKE_CXX_FLAGS_DEBUG} -g3")
+  include(CheckCXXCompilerFlag)
+  CHECK_CXX_COMPILER_FLAG(-march=native  COMPILER_SUPPORTS_MARCH_NATIVE)
+  if(COMPILER_SUPPORTS_MARCH_NATIVE)
+    set(MARCH_NATIVE "-march=native")
+  else()
+    set(MARCH_NATIVE "")
+  endif()
+  SET(CMAKE_CXX_FLAGS_RELEASE        "${MARCH_NATIVE} -O3 -DNDEBUG")
 
 elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
   # using Visual Studio C++
@@ -91,6 +100,15 @@ set_property(TARGET gtest PROPERTY CXX_STANDARD 11)
 set(TEST_SRCS 
   src/main_test.cpp
   src/array_adaptors_test.cpp
+  src/basics_test.cpp
+  src/point_cloud_test.cpp
+  src/curve_network_test.cpp
+  src/surface_mesh_test.cpp
+  src/volume_mesh_test.cpp
+  src/camera_view_test.cpp
+  src/group_test.cpp
+  src/floating_test.cpp
+  src/combo_test.cpp
 )
 
 add_executable(polyscope-test "${TEST_SRCS}")

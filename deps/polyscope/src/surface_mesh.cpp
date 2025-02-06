@@ -1,23 +1,19 @@
-// Copyright 2017-2019, Nicholas Sharp and the Polyscope contributors. http://polyscope.run.
+// Copyright 2017-2023, Nicholas Sharp and the Polyscope contributors. https://polyscope.run
+
 #include "polyscope/surface_mesh.h"
 
+#include "glm/fwd.hpp"
 #include "polyscope/combining_hash_functions.h"
-#include "polyscope/gl/colors.h"
-#include "polyscope/gl/gl_utils.h"
-#include "polyscope/gl/materials/materials.h"
-#include "polyscope/gl/shaders.h"
-#include "polyscope/gl/shaders/surface_shaders.h"
-#include "polyscope/gl/shaders/wireframe_shaders.h"
 #include "polyscope/pick.h"
 #include "polyscope/polyscope.h"
+#include "polyscope/render/engine.h"
 
 #include "imgui.h"
+#include "polyscope/types.h"
+#include "polyscope/utilities.h"
 
 #include <unordered_map>
 #include <utility>
-
-using std::cout;
-using std::endl;
 
 namespace polyscope {
 
@@ -25,227 +21,698 @@ namespace polyscope {
 const std::string SurfaceMesh::structureTypeName = "Surface Mesh";
 
 
-SurfaceMesh::SurfaceMesh(std::string name, const std::vector<glm::vec3>& vertexPositions,
-                         const std::vector<std::vector<size_t>>& faceIndices)
-    : QuantityStructure<SurfaceMesh>(name), vertices(vertexPositions), faces(faceIndices) {
+SurfaceMesh::SurfaceMesh(std::string name_)
+    : QuantityStructure<SurfaceMesh>(name_, typeName()),
+      // clang-format off
 
-  computeCounts();
-  computeGeometryData();
+// == managed quantities
 
-  // Colors
-  baseColor = getNextUniqueColor();
-  surfaceColor = baseColor;
+// positions
+vertexPositions(        uniquePrefix() + "vertexPositions",     vertexPositionsData),
+
+// connectivity / indices
+// (triangle and face inds are always computed initially when we triangulate the mesh)
+triangleVertexInds(     uniquePrefix() + "triangleVertexInds",          triangleVertexIndsData),
+triangleFaceInds(       uniquePrefix() + "triangleFaceInds",            triangleFaceIndsData),
+triangleCornerInds(     uniquePrefix() + "triangleCornerInds",          triangleCornerIndsData,         std::bind(&SurfaceMesh::computeTriangleCornerInds, this)),
+triangleAllEdgeInds(    uniquePrefix() + "triangleAllEdgeInds",         triangleAllEdgeIndsData,        std::bind(&SurfaceMesh::computeTriangleAllEdgeInds, this)),
+triangleAllHalfedgeInds(   uniquePrefix() + "triangleHalfedgeInds",     triangleAllHalfedgeIndsData,    std::bind(&SurfaceMesh::computeTriangleAllHalfedgeInds, this)),
+triangleAllCornerInds(     uniquePrefix() + "triangleCornerInds",       triangleAllCornerIndsData,      std::bind(&SurfaceMesh::computeTriangleAllCornerInds, this)),
+
+// internal triangle data for rendering
+baryCoord(              uniquePrefix() + "baryCoord",           baryCoordData),
+edgeIsReal(             uniquePrefix() + "edgeIsReal",          edgeIsRealData),
+
+// other internally-computed geometry
+faceNormals(            uniquePrefix() + "faceNormals",         faceNormalsData,        std::bind(&SurfaceMesh::computeFaceNormals, this)),
+faceCenters(            uniquePrefix() + "faceCenters",         faceCentersData,        std::bind(&SurfaceMesh::computeFaceCenters, this)),         
+faceAreas(              uniquePrefix() + "faceAreas",           faceAreasData,          std::bind(&SurfaceMesh::computeFaceAreas, this)),
+vertexNormals(          uniquePrefix() + "vertexNormals",       vertexNormalsData,      std::bind(&SurfaceMesh::computeVertexNormals, this)),
+vertexAreas(            uniquePrefix() + "vertexAreas",         vertexAreasData,        std::bind(&SurfaceMesh::computeVertexAreas, this)),
+
+// tangent spaces
+defaultFaceTangentBasisX(   uniquePrefix() + "defaultFaceTangentBasisX",  defaultFaceTangentBasisXData,  std::bind(&SurfaceMesh::computeDefaultFaceTangentBasisX, this)),
+defaultFaceTangentBasisY(   uniquePrefix() + "defaultFaceTangentBasisY",  defaultFaceTangentBasisYData,  std::bind(&SurfaceMesh::computeDefaultFaceTangentBasisY, this)),
+
+// == persistent options
+surfaceColor(           uniquePrefix() + "surfaceColor",    getNextUniqueColor()),
+edgeColor(              uniquePrefix() + "edgeColor",       glm::vec3{0., 0., 0.}), material(uniquePrefix() + "material", "clay"),
+edgeWidth(              uniquePrefix() + "edgeWidth",       0.),
+backFacePolicy(         uniquePrefix() + "backFacePolicy",  BackFacePolicy::Different),
+backFaceColor(          uniquePrefix() + "backFaceColor",   glm::vec3(1.f - surfaceColor.get().r, 1.f - surfaceColor.get().g, 1.f - surfaceColor.get().b)),
+shadeStyle(             uniquePrefix() + "shadeStyle",      MeshShadeStyle::Flat)
+
+// clang-format on
+{}
+
+SurfaceMesh::SurfaceMesh(std::string name_, const std::vector<glm::vec3>& vertexPositions_,
+                         const std::vector<uint32_t>& faceIndsEntries_, const std::vector<uint32_t>& faceIndsStart_)
+    : SurfaceMesh(name_) {
+
+  vertexPositionsData = vertexPositions_;
+  faceIndsEntries = faceIndsEntries_;
+  faceIndsStart = faceIndsStart_;
+
+  computeConnectivityData();
+  updateObjectSpaceBounds();
 }
 
+SurfaceMesh::SurfaceMesh(std::string name_, const std::vector<glm::vec3>& vertexPositions_,
+                         const std::vector<std::vector<size_t>>& facesIn)
+    : SurfaceMesh(name_) {
 
-void SurfaceMesh::computeCounts() {
+  vertexPositionsData = vertexPositions_;
+  nestedFacesToFlat(facesIn);
 
-  nFacesTriangulationCount = 0;
-  nCornersCount = 0;
-  nEdgesCount = 0;
-  edgeIndices.resize(nFaces());
-  halfedgeIndices.resize(nFaces());
-  std::unordered_map<std::pair<size_t, size_t>, size_t, polyscope::hash_combine::hash<std::pair<size_t, size_t>>>
-      edgeInds;
-  size_t iF = 0;
-  for (auto& face : faces) {
-    if (face.size() < 3) {
-      warning(name + " has face with degree < 3!");
+  computeConnectivityData();
+  updateObjectSpaceBounds();
+}
+
+void SurfaceMesh::nestedFacesToFlat(const std::vector<std::vector<size_t>>& nestedInds) {
+
+  faceIndsStart.clear();
+  faceIndsEntries.clear();
+  faceIndsStart.push_back(0);
+
+  for (const std::vector<size_t>& face : nestedInds) {
+    for (size_t iV : face) {
+      faceIndsEntries.push_back(iV);
     }
-    nFacesTriangulationCount += std::max(static_cast<int>(face.size()) - 2, 0);
-    edgeIndices[iF].resize(face.size());
-    halfedgeIndices[iF].resize(face.size());
+    faceIndsStart.push_back(faceIndsEntries.size());
+  }
+}
 
-    for (size_t i = 0; i < face.size(); i++) {
-      size_t vA = face[i];
-      size_t vB = face[(i + 1) % face.size()];
+void SurfaceMesh::computeConnectivityData() {
 
-      std::pair<size_t, size_t> edgeKey(std::min(vA, vB), std::max(vA, vB));
-      auto it = edgeInds.find(edgeKey);
-      size_t edgeInd = 0;
-      if (it == edgeInds.end()) {
-        edgeInd = nEdgesCount;
-        edgeInds.insert(it, {edgeKey, edgeInd});
-        nEdgesCount++;
-      } else {
-        edgeInd = it->second;
-      }
+  // some number-of-elements arithmetic
+  size_t numFaces = faceIndsStart.size() - 1;
+  nCornersCount = faceIndsEntries.size();
+  nFacesTriangulationCount = nCornersCount - 2 * numFaces;
 
-      edgeIndices[iF][i] = edgeInd;
-      halfedgeIndices[iF][i] = nCornersCount++;
-    }
+  // fill out these buffers as we construct the triangulation
+  triangleVertexIndsData.clear();
+  triangleVertexIndsData.resize(3 * nFacesTriangulationCount);
+  triangleFaceIndsData.clear();
+  triangleFaceIndsData.resize(3 * nFacesTriangulationCount);
+  baryCoordData.clear();
+  baryCoordData.resize(3 * nFacesTriangulationCount);
+  edgeIsRealData.clear();
+  edgeIsRealData.resize(3 * nFacesTriangulationCount);
 
-    iF++;
+  // validate the face-vertex indices
+  for (size_t iV : faceIndsEntries) {
+    if (iV >= vertexPositions.size())
+      exception("SurfaceMesh " + name + " has face vertex index " + std::to_string(iV) +
+                " out of bounds for number of vertices " + std::to_string(vertexPositions.size()));
   }
 
-  // Default data sizes
+  // construct the triangualted draw list and all other related data
+  size_t iTriFace = 0;
+  for (size_t iF = 0; iF < numFaces; iF++) {
+    size_t D = faceIndsStart[iF + 1] - faceIndsStart[iF];
+
+    size_t iStart = faceIndsStart[iF];
+    uint32_t vRoot = faceIndsEntries[iStart];
+
+    // implicitly triangulate from root
+    for (size_t j = 1; (j + 1) < D; j++) {
+      uint32_t vB = faceIndsEntries[iStart + j];
+      uint32_t vC = faceIndsEntries[iStart + ((j + 1) % D)];
+
+      // triangle vertex indices
+      triangleVertexIndsData[3 * iTriFace + 0] = vRoot;
+      triangleVertexIndsData[3 * iTriFace + 1] = vB;
+      triangleVertexIndsData[3 * iTriFace + 2] = vC;
+
+      // triangle face indices
+      for (size_t k = 0; k < 3; k++) triangleFaceIndsData[3 * iTriFace + k] = iF;
+
+      // barycentric coordinates
+      baryCoordData[3 * iTriFace + 0] = glm::vec3{1., 0., 0.};
+      baryCoordData[3 * iTriFace + 1] = glm::vec3{0., 1., 0.};
+      baryCoordData[3 * iTriFace + 2] = glm::vec3{0., 0., 1.};
+
+      // internal edges for triangulated polygons
+      glm::vec3 edgeRealV{0., 1., 0.};
+      if (j == 1) {
+        edgeRealV.x = 1.;
+      }
+      if (j + 2 == D) {
+        edgeRealV.z = 1.;
+      }
+      for (size_t k = 0; k < 3; k++) edgeIsRealData[3 * iTriFace + k] = edgeRealV;
+
+      iTriFace++;
+    }
+  }
+
   vertexDataSize = nVertices();
   faceDataSize = nFaces();
-  edgeDataSize = nEdges();
+  // edgeDataSize = ... we don't know this yet, gets set below
   halfedgeDataSize = nHalfedges();
   cornerDataSize = nCorners();
+
+  triangleVertexInds.markHostBufferUpdated();
+  triangleFaceInds.markHostBufferUpdated();
+  baryCoord.markHostBufferUpdated();
+  edgeIsReal.markHostBufferUpdated();
 }
 
-void SurfaceMesh::computeGeometryData() {
-  const glm::vec3 zero{0., 0., 0.};
+// =================================================
+// =====    Lazily-Populated Connectivity   ========
+// =================================================
 
-  // Reset face-valued
-  faceNormals.resize(nFaces());
-  faceAreas.resize(nFaces());
+void SurfaceMesh::computeTriangleAllEdgeInds() {
 
-  // Reset vertex-valued
-  vertexNormals.resize(nVertices());
-  std::fill(vertexNormals.begin(), vertexNormals.end(), zero);
-  vertexAreas.resize(nVertices());
-  std::fill(vertexAreas.begin(), vertexAreas.end(), 0);
+  // WARNING: logic duplicated in countEdges()
 
-  // Reset edge-valued
-  edgeLengths.resize(nEdges());
+  if (edgePerm.empty())
+    exception("SurfaceMesh " + name +
+              " performed an operation which requires edge indices to be specified, but none have been set. "
+              "Call setEdgePermutation().");
+
+  triangleVertexInds.ensureHostBufferPopulated();
+  triangleAllEdgeInds.data.resize(3 * 3 * nFacesTriangulation());
+  halfedgeEdgeCorrespondence.resize(nHalfedges());
+
+  // used to loop over edges
+  std::unordered_map<std::pair<size_t, size_t>, size_t, polyscope::hash_combine::hash<std::pair<size_t, size_t>>>
+      seenEdgeInds;
+
+  auto createEdgeKey = [&](size_t a, size_t b) -> std::pair<size_t, size_t> {
+    return std::make_pair(std::min(a, b), std::max(a, b));
+  };
+
+  size_t psEdgeInd = 0; // polyscope's edge index, iterated according to Polyscope's canonical ordering
+  for (size_t iF = 0; iF < nFaces(); iF++) {
+    size_t start = faceIndsStart[iF];
+    size_t D = faceIndsStart[iF + 1] - start;
+
+    // TODO why can't we use edges on non triangular meshes? Implement it.
+
+    if (D != 3) {
+      exception("SurfaceMesh " + name +
+                " attempted to access triangle-edge indices, but it has non-triangular faces. These indices are "
+                "only well-defined on a pure-triangular mesh.");
+    }
+
+    glm::uvec3 thisTriInds{0, 0, 0};
+    for (size_t j = 0; j < 3; j++) {
+      size_t vA = triangleVertexInds.data[3 * iF + j];
+      size_t vB = triangleVertexInds.data[3 * iF + ((j + 1) % 3)];
+
+      std::pair<size_t, size_t> key = createEdgeKey(vA, vB);
+
+      size_t thisEdgeInd;
+      if (seenEdgeInds.find(key) == seenEdgeInds.end()) {
+        // process a new edge in the canonical ordering
+        if (psEdgeInd >= edgePerm.size()) {
+          exception("SurfaceMesh " + name +
+                    " edge indexing out of bounds. Did you pass an edge ordering that is too short?");
+        }
+        thisEdgeInd = edgePerm[psEdgeInd];
+        seenEdgeInds[key] = thisEdgeInd;
+        psEdgeInd++;
+      } else {
+        // we've processed this edge before, retrieve its assigned index
+        thisEdgeInd = seenEdgeInds[key];
+      }
+
+      halfedgeEdgeCorrespondence[start + j] = thisEdgeInd;
+      thisTriInds[j] = thisEdgeInd;
+    }
+
+    for (size_t j = 0; j < 3; j++) {
+      for (size_t k = 0; k < 3; k++) {
+        triangleAllEdgeInds.data[9 * iF + 3 * j + k] = thisTriInds[k];
+      }
+    }
+  }
+
+  nEdgesCount = psEdgeInd;
+  triangleAllEdgeInds.markHostBufferUpdated();
+}
+
+void SurfaceMesh::countEdges() {
+
+  // WARNING: logic duplicated in computeTriangleAllEdgeInds()
+
+  // used to loop over edges
+  std::unordered_map<std::pair<size_t, size_t>, size_t, polyscope::hash_combine::hash<std::pair<size_t, size_t>>>
+      seenEdgeInds;
+
+  auto createEdgeKey = [&](size_t a, size_t b) -> std::pair<size_t, size_t> {
+    return std::make_pair(std::min(a, b), std::max(a, b));
+  };
+
+  size_t psEdgeInd = 0; // polyscope's edge index, iterated according to Polyscope's canonical ordering
+  for (size_t iF = 0; iF < nFaces(); iF++) {
+    size_t start = faceIndsStart[iF];
+    size_t D = faceIndsStart[iF + 1] - start;
+
+    if (D != 3) {
+      exception("SurfaceMesh " + name +
+                " attempted to count edges, but mesh has non-triangular faces. Edge functions are only implemented on "
+                "a pure-triangular mesh.");
+    }
+
+    for (size_t j = 0; j < 3; j++) {
+      size_t vA = triangleVertexInds.data[3 * iF + j];
+      size_t vB = triangleVertexInds.data[3 * iF + ((j + 1) % 3)];
+
+      std::pair<size_t, size_t> key = createEdgeKey(vA, vB);
+
+      if (seenEdgeInds.find(key) == seenEdgeInds.end()) {
+        size_t thisEdgeInd = psEdgeInd;
+        seenEdgeInds[key] = thisEdgeInd;
+        psEdgeInd++;
+      }
+    }
+  }
+
+  nEdgesCount = psEdgeInd;
+}
+
+size_t SurfaceMesh::nEdges() {
+  if (nEdgesCount == INVALID_IND) countEdges();
+  return nEdgesCount;
+}
+
+void SurfaceMesh::computeTriangleCornerInds() {
+
+  triangleCornerInds.data.clear();
+  triangleCornerInds.data.reserve(3 * nFacesTriangulation());
+
+  for (size_t iF = 0; iF < nFaces(); iF++) {
+    size_t iStart = faceIndsStart[iF];
+    size_t D = faceIndsStart[iF + 1] - iStart;
+
+    // emit the data for triangles triangulating this face
+    for (size_t j = 1; (j + 1) < D; j++) {
+      uint32_t c0 = iStart;
+      uint32_t c1 = iStart + j;
+      uint32_t c2 = iStart + j + 1;
+
+      triangleCornerInds.data.push_back(c0);
+      triangleCornerInds.data.push_back(c1);
+      triangleCornerInds.data.push_back(c2);
+    }
+  }
+
+  triangleCornerInds.markHostBufferUpdated();
+}
+
+void SurfaceMesh::computeTriangleAllHalfedgeInds() {
+
+  triangleAllHalfedgeInds.data.clear();
+  triangleAllHalfedgeInds.data.reserve(3 * 3 * nFacesTriangulation());
+
+  bool haveCustomIndex = !halfedgePerm.empty();
+
+  for (size_t iF = 0; iF < nFaces(); iF++) {
+    size_t iStart = faceIndsStart[iF];
+    size_t D = faceIndsStart[iF + 1] - iStart;
+
+    // emit the data for triangles triangulating this face
+    for (size_t j = 1; (j + 1) < D; j++) {
+
+      // FORNOW: for polygonal faces, substitute the opposite-edge value for all internal edges of the triangulation
+
+      uint32_t he0 = iStart + j; // this is a dummy value due to triangulation of polygons
+      uint32_t he1 = iStart + j; // this is the actual right value for the opposite edge
+      uint32_t he2 = iStart + j; // this is a dummy value due to triangulation of polygons
+
+      // substitute non-dummy values for first and last edge if this is not an internal tri
+      if (j == 1) he0 = iStart;
+      if (j + 2 == D) he2 = iStart + D - 1;
+
+      if (haveCustomIndex) {
+        he0 = halfedgePerm[he0];
+        he1 = halfedgePerm[he1];
+        he2 = halfedgePerm[he2];
+      }
+
+      for (size_t k = 0; k < 3; k++) {
+        triangleAllHalfedgeInds.data.push_back(he0);
+        triangleAllHalfedgeInds.data.push_back(he1);
+        triangleAllHalfedgeInds.data.push_back(he2);
+      }
+    }
+  }
+
+  triangleAllHalfedgeInds.markHostBufferUpdated();
+}
+
+void SurfaceMesh::computeTriangleAllCornerInds() {
+
+  triangleAllCornerInds.data.clear();
+  triangleAllCornerInds.data.reserve(3 * nFacesTriangulation());
+
+  bool haveCustomIndex = !cornerPerm.empty();
+
+  for (size_t iF = 0; iF < nFaces(); iF++) {
+    size_t iStart = faceIndsStart[iF];
+    size_t D = faceIndsStart[iF + 1] - iStart;
+
+    // emit the data for triangles triangulating this face
+    for (size_t j = 1; (j + 1) < D; j++) {
+      uint32_t c0 = iStart;
+      uint32_t c1 = iStart + j;
+      uint32_t c2 = iStart + j + 1;
+
+      if (haveCustomIndex) {
+        c0 = cornerPerm[c0];
+        c1 = cornerPerm[c1];
+        c2 = cornerPerm[c2];
+      }
+
+      for (size_t k = 0; k < 3; k++) {
+        triangleAllCornerInds.data.push_back(c0);
+        triangleAllCornerInds.data.push_back(c1);
+        triangleAllCornerInds.data.push_back(c2);
+      }
+    }
+  }
+
+  triangleAllCornerInds.markHostBufferUpdated();
+}
+
+
+// =================================================
+// ========    Geometric Quantities      ==========
+// =================================================
+
+
+size_t SurfaceMesh::nVertices() { return vertexPositions.size(); }
+
+void SurfaceMesh::computeFaceNormals() {
+
+  vertexPositions.ensureHostBufferPopulated();
+
+  faceNormals.data.resize(nFaces());
+
+  for (size_t iF = 0; iF < nFaces(); iF++) {
+    size_t iStart = faceIndsStart[iF];
+    size_t D = faceIndsStart[iF + 1] - iStart;
+
+    glm::vec3 fN{0., 0., 0.};
+    if (D == 3) {
+      glm::vec3 pA = vertexPositions.data[faceIndsEntries[iStart + 0]];
+      glm::vec3 pB = vertexPositions.data[faceIndsEntries[iStart + 1]];
+      glm::vec3 pC = vertexPositions.data[faceIndsEntries[iStart + 2]];
+      fN = glm::cross(pB - pA, pC - pA);
+    } else {
+      for (size_t j = 0; j < D; j++) {
+        glm::vec3 pA = vertexPositions.data[faceIndsEntries[iStart + j]];
+        glm::vec3 pB = vertexPositions.data[faceIndsEntries[iStart + (j + 1) % D]];
+        glm::vec3 pC = vertexPositions.data[faceIndsEntries[iStart + (j + 2) % D]];
+        fN += glm::cross(pC - pB, pA - pB);
+      }
+    }
+    fN = glm::normalize(fN);
+    faceNormals.data[iF] = fN;
+  }
+
+  faceNormals.markHostBufferUpdated();
+}
+
+void SurfaceMesh::computeFaceCenters() {
+
+  vertexPositions.ensureHostBufferPopulated();
+
+  faceCenters.data.resize(nFaces());
+
+  for (size_t iF = 0; iF < nFaces(); iF++) {
+    size_t start = faceIndsStart[iF];
+    size_t D = faceIndsStart[iF + 1] - start;
+    glm::vec3 faceCenter{0., 0., 0.};
+    for (size_t j = 0; j < D; j++) {
+      glm::vec3 pA = vertexPositions.data[faceIndsEntries[start + j]];
+      faceCenter += pA;
+    }
+    faceCenter /= D;
+    faceCenters.data[iF] = faceCenter;
+  }
+
+  faceCenters.markHostBufferUpdated();
+}
+
+void SurfaceMesh::computeFaceAreas() {
+
+  vertexPositions.ensureHostBufferPopulated();
+
+  faceAreas.data.resize(nFaces());
 
   // Loop over faces to compute face-valued quantities
   for (size_t iF = 0; iF < nFaces(); iF++) {
-    auto& face = faces[iF];
-    size_t D = face.size();
+    size_t start = faceIndsStart[iF];
+    size_t D = faceIndsStart[iF + 1] - start;
 
-    glm::vec3 fN = zero;
-    double fA = 0;
-    if (face.size() == 3) {
-      glm::vec3 pA = vertices[face[0]];
-      glm::vec3 pB = vertices[face[1]];
-      glm::vec3 pC = vertices[face[2]];
-
-      fN = glm::cross(pB - pA, pC - pA);
+    // Compute a face normal
+    double fA;
+    if (D == 3) {
+      glm::vec3 pA = vertexPositions.data[faceIndsEntries[start + 0]];
+      glm::vec3 pB = vertexPositions.data[faceIndsEntries[start + 1]];
+      glm::vec3 pC = vertexPositions.data[faceIndsEntries[start + 2]];
+      glm::vec3 fN = glm::cross(pB - pA, pC - pA);
       fA = 0.5 * glm::length(fN);
-    } else if (face.size() > 3) {
-
-      glm::vec3 pRoot = vertices[face[0]];
-      for (size_t j = 0; j < D; j++) {
-        glm::vec3 pA = vertices[face[j]];
-        glm::vec3 pB = vertices[face[(j + 1) % D]];
-        glm::vec3 pC = vertices[face[(j + 2) % D]];
-
-        fN += glm::cross(pC - pB, pA - pB);
-
-        // _some_ definition of area for a non-triangular face
-        if (j != 0 && j != (D - 1)) {
-          fA += 0.5 * glm::length(glm::cross(pA - pRoot, pB - pRoot));
-        }
+    } else {
+      fA = 0;
+      glm::vec3 pRoot = vertexPositions.data[faceIndsEntries[start]];
+      for (size_t j = 1; j + 1 < D; j++) {
+        glm::vec3 pA = vertexPositions.data[faceIndsEntries[start + j]];
+        glm::vec3 pB = vertexPositions.data[faceIndsEntries[start + j + 1]];
+        fA += 0.5 * glm::length(glm::cross(pA - pRoot, pB - pRoot));
       }
     }
 
-    // Set face values
-    fN = glm::normalize(fN);
-    faceNormals[iF] = fN;
-    faceAreas[iF] = fA;
-
-    // Update incident vertices
-    for (size_t j = 0; j < D; j++) {
-      glm::vec3 pA = vertices[face[j]];
-      glm::vec3 pB = vertices[face[(j + 1) % D]];
-      glm::vec3 pC = vertices[face[(j + 2) % D]];
-
-      vertexAreas[face[j]] += fA / D;
-
-      // Corner angle for weighting normals
-      double dot = glm::dot(glm::normalize(pB - pA), glm::normalize(pC - pA));
-      float angle = std::acos(glm::clamp(-1., 1., dot));
-      glm::vec3 normalContrib = angle * fN;
-
-      if (std::isfinite(normalContrib.x) && std::isfinite(normalContrib.y) && std::isfinite(normalContrib.z)) {
-        vertexNormals[face[(j + 1) % D]] += normalContrib;
-      }
-
-      // Compute edge lengths while we're at it
-      edgeLengths[edgeIndices[iF][j]] = glm::length(pA - pB);
-    }
+    faceAreas.data[iF] = fA;
   }
 
-
-  // Normalize vertex normals
-  for (auto& vec : vertexNormals) {
-    double L = glm::length(vec);
-    if (L > 0) {
-      vec /= L;
-    }
-  }
+  faceAreas.markHostBufferUpdated();
 }
 
 
-void SurfaceMesh::ensureHaveFaceTangentSpaces() {
-  if (faceTangentSpaces.size() > 0) return;
+void SurfaceMesh::computeVertexNormals() {
 
-  faceTangentSpaces.resize(nFaces());
+  faceNormals.ensureHostBufferPopulated();
+  faceAreas.ensureHostBufferPopulated();
+
+  vertexNormals.data.resize(nVertices());
+
+  const glm::vec3 zero{0., 0., 0.};
+
+  std::fill(vertexNormals.data.begin(), vertexNormals.data.end(), zero);
+
+  // Accumulate quantities from each face
+  for (size_t iF = 0; iF < nFaces(); iF++) {
+    size_t start = faceIndsStart[iF];
+    size_t D = faceIndsStart[iF + 1] - start;
+    for (size_t j = 0; j < D; j++) {
+      size_t iV = faceIndsEntries[start + j];
+      vertexNormals.data[iV] += faceNormals.data[iF] * static_cast<float>(faceAreas.data[iF]);
+    }
+  }
+
+  // Normalize
+  for (size_t iV = 0; iV < nVertices(); iV++) {
+    vertexNormals.data[iV] = glm::normalize(vertexNormals.data[iV]);
+  }
+
+  vertexNormals.markHostBufferUpdated();
+}
+
+void SurfaceMesh::computeVertexAreas() {
+
+  faceAreas.ensureHostBufferPopulated();
+
+  vertexAreas.data.resize(nVertices());
+  std::fill(vertexAreas.data.begin(), vertexAreas.data.end(), 0.);
+
+  // Accumulate quantities from each face
+  for (size_t iF = 0; iF < nFaces(); iF++) {
+    size_t D = faceIndsStart[iF + 1] - faceIndsStart[iF];
+    size_t start = faceIndsStart[iF];
+    for (size_t j = 0; j < D; j++) {
+      size_t iV = faceIndsEntries[start + j];
+      vertexAreas.data[iV] += faceAreas.data[iF] / D;
+    }
+  }
+
+  vertexAreas.markHostBufferUpdated();
+}
+
+void SurfaceMesh::computeDefaultFaceTangentBasisX() {
+
+  // NOTE: this function is weirdly duplicated into an 'X' and 'Y' paradigm to fit the compute-function-per-buffer
+  // paradigm
+
+  vertexPositions.ensureHostBufferPopulated();
+  faceNormals.ensureHostBufferPopulated();
+
+  defaultFaceTangentBasisX.data.resize(nFaces());
 
   for (size_t iF = 0; iF < nFaces(); iF++) {
-    auto& face = faces[iF];
-    size_t D = face.size();
-    if (D < 2) continue;
+    size_t D = faceIndsStart[iF + 1] - faceIndsStart[iF];
+    if (D != 3) exception("Default face tangent spaces only available for pure-triangular meshes");
 
-    glm::vec3 pA = vertices[face[0]];
-    glm::vec3 pB = vertices[face[1]];
-    glm::vec3 N = faceNormals[iF];
+    size_t start = faceIndsStart[iF];
+
+    glm::vec3 pA = vertexPositions.data[faceIndsEntries[start + 0]];
+    glm::vec3 pB = vertexPositions.data[faceIndsEntries[start + 1]];
+    glm::vec3 N = faceNormals.data[iF];
 
     glm::vec3 basisX = pB - pA;
     basisX = glm::normalize(basisX - N * glm::dot(N, basisX));
 
     glm::vec3 basisY = glm::normalize(-glm::cross(basisX, N));
 
-    faceTangentSpaces[iF][0] = basisX;
-    faceTangentSpaces[iF][1] = basisY;
+    defaultFaceTangentBasisX.data[iF] = basisX;
+  }
+
+  defaultFaceTangentBasisX.markHostBufferUpdated();
+}
+
+void SurfaceMesh::computeDefaultFaceTangentBasisY() {
+
+  // NOTE: this function is weirdly duplicated into an 'X' and 'Y' paradigm to fit the compute-function-per-buffer
+  // paradigm
+
+  vertexPositions.ensureHostBufferPopulated();
+  faceNormals.ensureHostBufferPopulated();
+
+  defaultFaceTangentBasisY.data.resize(nFaces());
+
+  for (size_t iF = 0; iF < nFaces(); iF++) {
+    size_t D = faceIndsStart[iF + 1] - faceIndsStart[iF];
+    if (D != 3) exception("Default face tangent spaces only available for pure-triangular meshes");
+
+    size_t start = faceIndsStart[iF];
+
+    glm::vec3 pA = vertexPositions.data[faceIndsEntries[start + 0]];
+    glm::vec3 pB = vertexPositions.data[faceIndsEntries[start + 1]];
+    glm::vec3 N = faceNormals.data[iF];
+
+    glm::vec3 basisX = pB - pA;
+    basisX = glm::normalize(basisX - N * glm::dot(N, basisX));
+
+    glm::vec3 basisY = glm::normalize(-glm::cross(basisX, N));
+
+    defaultFaceTangentBasisY.data[iF] = basisY;
+  }
+
+  defaultFaceTangentBasisY.markHostBufferUpdated();
+}
+
+// === Edge Lengths ===
+
+// void SurfaceMesh::computeEdgeLengths() {
+//
+//   vertexPositions.ensureHostBufferPopulated();
+//
+//   edgeLengths.data.resize(nEdges());
+//
+//   // Compute edge lengths
+//   for (size_t iF = 0; iF < nFaces(); iF++) {
+//     size_t D = faceIndsStart[iF + 1] - faceIndsStart[iF];
+//     size_t start = faceIndsStart[iF];
+//     for (size_t j = 0; j < D; j++) {
+//       size_t iA = faceIndsEntries[start + j];
+//       size_t iB = faceIndsEntries[start + (j + 1) % D];
+//       glm::vec3 pA = vertexPositions.data[iA];
+//       glm::vec3 pB = vertexPositions.data[iB];
+//       edgeLengths.data[edgeIndices[iF][j]] = glm::length(pA - pB);
+//     }
+//   }
+//
+//   edgeLengths.markHostBufferUpdated();
+// }
+
+void SurfaceMesh::checkTriangular() {
+  if (nFacesTriangulation() != nFaces()) {
+    exception("Cannot proceed, SurfaceMesh " + name + " is not a triangular mesh.");
   }
 }
 
-void SurfaceMesh::ensureHaveVertexTangentSpaces() {
-  if (vertexTangentSpaces.size() > 0) return;
+void SurfaceMesh::ensureHaveManifoldConnectivity() {
+  if (!twinHalfedge.empty()) return; // already populated
 
-  vertexTangentSpaces.resize(nVertices());
-  std::vector<char> hasTangent(nVertices(), false);
+  triangleVertexInds.ensureHostBufferPopulated();
 
-  for (size_t iF = 0; iF < nFaces(); iF++) {
-    auto& face = faces[iF];
-    size_t D = face.size();
-    if (D < 2) continue;
+  twinHalfedge.resize(nHalfedges());
 
-    for (size_t j = 0; j < D; j++) {
+  // Maps from edge (sorted) to all halfedges incident on that edge
+  std::unordered_map<std::pair<size_t, size_t>, std::vector<size_t>,
+                     polyscope::hash_combine::hash<std::pair<size_t, size_t>>>
+      edgeInds;
 
-      size_t vA = face[j];
-      size_t vB = face[(j + 1) % D];
+  // Fill out faceForHalfedge and populate edge lookup map
+  for (size_t iF = 0; iF < nFacesTriangulation(); iF++) {
+    for (size_t j = 0; j < 3; j++) {
+      size_t iV = triangleVertexInds.data[3 * iF + j];
+      size_t iVNext = triangleVertexInds.data[3 * iF + ((j + 1) % 3)];
+      size_t iHe = 3 * iF + j;
 
-      if (hasTangent[vA]) continue;
 
-      glm::vec3 pA = vertices[vA];
-      glm::vec3 pB = vertices[vB];
-      glm::vec3 N = vertexNormals[vA];
+      std::pair<size_t, size_t> edgeKey(std::min(iV, iVNext), std::max(iV, iVNext));
 
-      glm::vec3 basisX = pB - pA;
-      basisX = basisX - N * glm::dot(N, basisX);
+      // Make sure the key is populated
+      auto it = edgeInds.find(edgeKey);
+      if (it == edgeInds.end()) {
+        it = edgeInds.insert(it, {edgeKey, std::vector<size_t>()});
+      }
 
-      glm::vec3 basisY = -glm::cross(basisX, N);
+      // Add this halfedge to the entry
+      it->second.push_back(iHe);
+    }
+  }
 
-      vertexTangentSpaces[vA][0] = basisX;
-      vertexTangentSpaces[vA][1] = basisY;
+  // Second walk through, setting twins
+  for (size_t iF = 0; iF < nFacesTriangulation(); iF++) {
+    for (size_t j = 0; j < 3; j++) {
+      size_t iV = triangleVertexInds.data[3 * iF + j];
+      size_t iVNext = triangleVertexInds.data[3 * iF + ((j + 1) % 3)];
+      size_t iHe = 3 * iF + j;
 
-      hasTangent[vA] = true;
+      std::pair<size_t, size_t> edgeKey(std::min(iV, iVNext), std::max(iV, iVNext));
+      std::vector<size_t>& edgeHalfedges = edgeInds.find(edgeKey)->second;
+
+      // Pick the first halfedge we find which is not this one
+      size_t myTwin = INVALID_IND;
+      for (size_t t : edgeHalfedges) {
+        if (t != iHe) {
+          myTwin = t;
+          break;
+        }
+      }
+
+      twinHalfedge[iHe] = myTwin;
     }
   }
 }
 
 void SurfaceMesh::draw() {
-  if (!enabled) {
+  if (!isEnabled()) {
     return;
   }
 
+  render::engine->setBackfaceCull(backFacePolicy.get() == BackFacePolicy::Cull);
 
   // If no quantity is drawing the surface, we should draw it
   if (dominantQuantity == nullptr) {
 
     if (program == nullptr) {
       prepare();
+
+      // do this now to reduce lag when picking later, etc
+      // FIXME
+      // preparePick();
     }
 
     // Set uniforms
-    setTransformUniforms(*program);
-    program->setUniform("u_basecolor", surfaceColor);
+    setStructureUniforms(*program);
+    setSurfaceMeshUniforms(*program);
+    program->setUniform("u_baseColor", getSurfaceColor());
 
     program->draw();
   }
@@ -255,31 +722,33 @@ void SurfaceMesh::draw() {
     x.second->draw();
   }
 
-  // Draw the wireframe
-  if (edgeWidth > 0) {
-    if (wireframeProgram == nullptr) {
-      prepareWireframe();
-    }
+  render::engine->setBackfaceCull(); // return to default setting
 
-    // Set uniforms
-    setTransformUniforms(*wireframeProgram);
-    wireframeProgram->setUniform("u_edgeWidth", edgeWidth);
-    wireframeProgram->setUniform("u_edgeColor", edgeColor);
+  for (auto& x : floatingQuantities) {
+    x.second->draw();
+  }
+}
 
-    glDepthFunc(GL_LEQUAL); // Make sure wireframe wins depth tests
-    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO,
-                        GL_ONE); // slightly weird blend function: ensures alpha is set by whatever was drawn before,
-                                 // rather than the wireframe
+void SurfaceMesh::drawDelayed() {
+  if (!isEnabled()) {
+    return;
+  }
 
-    wireframeProgram->draw();
+  render::engine->setBackfaceCull(backFacePolicy.get() == BackFacePolicy::Cull);
 
-    glDepthFunc(GL_LESS); // return to normal
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  for (auto& x : quantities) {
+    x.second->drawDelayed();
+  }
+
+  render::engine->setBackfaceCull(); // return to default setting
+
+  for (auto& x : floatingQuantities) {
+    x.second->drawDelayed();
   }
 }
 
 void SurfaceMesh::drawPick() {
-  if (!enabled) {
+  if (!isEnabled()) {
     return;
   }
 
@@ -287,304 +756,272 @@ void SurfaceMesh::drawPick() {
     preparePick();
   }
 
+  render::engine->setBackfaceCull(backFacePolicy.get() == BackFacePolicy::Cull);
+
   // Set uniforms
-  setTransformUniforms(*pickProgram);
+  setStructureUniforms(*pickProgram);
 
   pickProgram->draw();
+
+  render::engine->setBackfaceCull(); // return to default setting
 }
 
 void SurfaceMesh::prepare() {
-  program.reset(
-      new gl::GLProgram(&gl::PLAIN_SURFACE_VERT_SHADER, &gl::PLAIN_SURFACE_FRAG_SHADER, gl::DrawMode::Triangles));
+  // clang-format off
+  program = render::engine->requestShader(
+      "MESH", 
+      addSurfaceMeshRules({"SHADE_BASECOLOR"})
+  );
+  // clang-format on
 
   // Populate draw buffers
-  fillGeometryBuffers(*program);
-
-  setMaterialForProgram(*program, "wax");
-}
-
-void SurfaceMesh::prepareWireframe() {
-  wireframeProgram.reset(new gl::GLProgram(&gl::SURFACE_WIREFRAME_VERT_SHADER, &gl::SURFACE_WIREFRAME_FRAG_SHADER,
-                                           gl::DrawMode::Triangles));
-
-  // Populate draw buffers
-  fillGeometryBuffersWireframe(*wireframeProgram);
-
-  setMaterialForProgram(*wireframeProgram, "wax");
+  setMeshGeometryAttributes(*program);
+  render::engine->setMaterial(*program, getMaterial());
 }
 
 void SurfaceMesh::preparePick() {
 
-  // Create a new program
-  pickProgram.reset(
-      new gl::GLProgram(&gl::PICK_SURFACE_VERT_SHADER, &gl::PICK_SURFACE_FRAG_SHADER, gl::DrawMode::Triangles));
+
+  bool simplePick = !(edgesHaveBeenUsed || halfedgesHaveBeenUsed || cornersHaveBeenUsed);
+
+  if (simplePick) {
+    pickProgram =
+        render::engine->requestShader("MESH", addSurfaceMeshRules({"MESH_PROPAGATE_PICK_SIMPLE"}, true, false),
+                                      render::ShaderReplacementDefaults::Pick);
+  } else {
+    pickProgram = render::engine->requestShader("MESH", addSurfaceMeshRules({"MESH_PROPAGATE_PICK"}, true, false),
+                                                render::ShaderReplacementDefaults::Pick);
+  }
+
+  // Populate draw buffers
+  setMeshGeometryAttributes(*pickProgram);
+  setMeshPickAttributes(*pickProgram);
+}
+
+void SurfaceMesh::setMeshGeometryAttributes(render::ShaderProgram& p) {
+  if (p.hasAttribute("a_vertexPositions")) {
+    p.setAttribute("a_vertexPositions", vertexPositions.getIndexedRenderAttributeBuffer(triangleVertexInds));
+  }
+  if (p.hasAttribute("a_vertexNormals")) {
+
+    if (getShadeStyle() == MeshShadeStyle::Smooth) {
+      p.setAttribute("a_vertexNormals", vertexNormals.getIndexedRenderAttributeBuffer(triangleVertexInds));
+    } else {
+      // these aren't actually used in in the automatically-generated case, but the shader is set up in a lazy way so
+      // it is still needed
+      p.setAttribute("a_vertexNormals", faceNormals.getIndexedRenderAttributeBuffer(triangleFaceInds));
+    }
+  }
+  if (p.hasAttribute("a_normal")) {
+    p.setAttribute("a_normal", faceNormals.getIndexedRenderAttributeBuffer(triangleFaceInds));
+  }
+  if (p.hasAttribute("a_barycoord")) {
+    p.setAttribute("a_barycoord", baryCoord.getRenderAttributeBuffer());
+  }
+  if (p.hasAttribute("a_edgeIsReal")) {
+    p.setAttribute("a_edgeIsReal", edgeIsReal.getRenderAttributeBuffer());
+  }
+  if (wantsCullPosition()) {
+    p.setAttribute("a_cullPos", faceCenters.getIndexedRenderAttributeBuffer(triangleFaceInds));
+  }
+}
+
+void SurfaceMesh::setMeshPickAttributes(render::ShaderProgram& p) {
+
+  // TODO in principle all of the data this shader needs is already available on the GPU via the [...]Inds attribute
+  // buffers. We could move the encoding / offsetting logic to happen in a shader with some uniforms, and avoid any
+  // CPU-side processing. Maybe the solution is to directly render ints?
+
+  // make sure we have the relevant indexing data
+  bool simplePick = !(edgesHaveBeenUsed || halfedgesHaveBeenUsed || cornersHaveBeenUsed);
+  triangleVertexInds.ensureHostBufferPopulated();
+  triangleFaceInds.ensureHostBufferPopulated();
+  if (edgesHaveBeenUsed) triangleAllEdgeInds.ensureHostBufferPopulated();
+  if (halfedgesHaveBeenUsed) triangleAllHalfedgeInds.ensureHostBufferPopulated();
+  if (cornersHaveBeenUsed) triangleCornerInds.ensureHostBufferPopulated();
+
+  // nEdges() requires computing number of edges, which is expensive and might not even be implemented for polygonal
+  // meshes. This way we only call it if actually needed, and use 0 otherwise.
+  size_t nEdgesSafe = edgesHaveBeenUsed ? nEdges() : 0;
 
   // Get element indices
-  size_t totalPickElements = nVertices() + nFaces() + nEdges() + nHalfedges();
+  size_t totalPickElements = nVertices() + nFaces() + nEdgesSafe + nHalfedges() + nCorners();
 
-  // In "local" indices, indexing elements only within this triMesh, used for reading later
+  // In "local" indices, indexing elements only within this mesh, used for reading later
   facePickIndStart = nVertices();
   edgePickIndStart = facePickIndStart + nFaces();
-  halfedgePickIndStart = edgePickIndStart + nEdges();
+  halfedgePickIndStart = edgePickIndStart + nEdgesSafe;
+  cornerPickIndStart = halfedgePickIndStart + nHalfedges();
 
   // In "global" indices, indexing all elements in the scene, used to fill buffers for drawing here
   size_t pickStart = pick::requestPickBufferRange(this, totalPickElements);
-  size_t faceGlobalPickIndStart = pickStart + nVertices();
-  size_t edgeGlobalPickIndStart = faceGlobalPickIndStart + nFaces();
-  size_t halfedgeGlobalPickIndStart = edgeGlobalPickIndStart + nEdges();
+  size_t vertexGlobalPickIndStart = pickStart;
+  size_t faceGlobalPickIndStart = pickStart + facePickIndStart;
+  size_t edgeGlobalPickIndStart = pickStart + edgePickIndStart;
+  size_t halfedgeGlobalPickIndStart = pickStart + halfedgePickIndStart;
+  size_t cornerGlobalPickIndStart = pickStart + cornerPickIndStart;
 
   // == Fill buffers
-  std::vector<glm::vec3> positions;
-  std::vector<glm::vec3> bcoord;
-  std::vector<std::array<glm::vec3, 3>> vertexColors, edgeColors, halfedgeColors;
+  std::vector<std::array<glm::vec3, 3>> vertexColors, halfedgeColors, cornerColors;
   std::vector<glm::vec3> faceColor;
 
   // Reserve space
-  positions.reserve(3 * nFacesTriangulation());
-  bcoord.reserve(3 * nFacesTriangulation());
   vertexColors.reserve(3 * nFacesTriangulation());
-  edgeColors.reserve(3 * nFacesTriangulation());
-  halfedgeColors.reserve(3 * nFacesTriangulation());
   faceColor.reserve(3 * nFacesTriangulation());
+  if (!simplePick) {
+    halfedgeColors.reserve(3 * nFacesTriangulation());
+    cornerColors.reserve(3 * nFacesTriangulation());
+  }
+
 
   // Build all quantities in each face
+  size_t iFTri = 0;
   for (size_t iF = 0; iF < nFaces(); iF++) {
-    auto& face = faces[iF];
-    size_t D = face.size();
+    size_t D = faceIndsStart[iF + 1] - faceIndsStart[iF];
 
-    // implicitly triangulate from root
-    size_t vRoot = face[0];
-    glm::vec3 pRoot = vertices[vRoot];
+    glm::vec3 fColor = pick::indToVec(iF + faceGlobalPickIndStart);
+
     for (size_t j = 1; (j + 1) < D; j++) {
-      size_t vB = face[j];
-      glm::vec3 pB = vertices[vB];
-      size_t vC = face[(j + 1) % D];
-      glm::vec3 pC = vertices[vC];
 
-      glm::vec3 fColor = pick::indToVec(iF + faceGlobalPickIndStart);
-      std::array<size_t, 3> vertexInds = {vRoot, vB, vC};
+      // == Build face & vertex index data
 
-      positions.push_back(pRoot);
-      positions.push_back(pB);
-      positions.push_back(pC);
+      // clang-format off
+      std::array<glm::vec3, 3> vColor = {
+        pick::indToVec(triangleVertexInds.data[3*iFTri + 0] + vertexGlobalPickIndStart),
+        pick::indToVec(triangleVertexInds.data[3*iFTri + 1] + vertexGlobalPickIndStart),
+        pick::indToVec(triangleVertexInds.data[3*iFTri + 2] + vertexGlobalPickIndStart),
+      };
+      // clang-format on
 
-      // Build all quantities
-      std::array<glm::vec3, 3> vColor;
-
-      for (size_t i = 0; i < 3; i++) {
-        // Want just one copy of face color, so we can build it in the usual way
-        faceColor.push_back(fColor);
-
-        // Vertex index color
-        vColor[i] = pick::indToVec(vertexInds[i] + pickStart);
-      }
-
-      std::array<glm::vec3, 3> eColor = {fColor, pick::indToVec(edgeIndices[iF][j] + edgeGlobalPickIndStart), fColor};
-      std::array<glm::vec3, 3> heColor = {fColor, pick::indToVec(halfedgeIndices[iF][j] + halfedgeGlobalPickIndStart),
-                                          fColor};
-
-      // First edge is a real edge
-      if (j == 1) {
-        eColor[0] = pick::indToVec(edgeIndices[iF][0] + edgeGlobalPickIndStart);
-        heColor[0] = pick::indToVec(halfedgeIndices[iF][0] + halfedgeGlobalPickIndStart);
-      }
-      // Last is a real edge
-      if (j + 2 == D) {
-        eColor[2] = pick::indToVec(edgeIndices[iF].back() + edgeGlobalPickIndStart);
-        heColor[2] = pick::indToVec(halfedgeIndices[iF].back() + halfedgeGlobalPickIndStart);
-      }
-
-      // Push three copies of the values needed at each vertex
       for (int j = 0; j < 3; j++) {
+        faceColor.push_back(fColor);
         vertexColors.push_back(vColor);
-        edgeColors.push_back(eColor);
-        halfedgeColors.push_back(heColor);
       }
 
-      // Barycoords
-      bcoord.push_back(glm::vec3{1.0, 0.0, 0.0});
-      bcoord.push_back(glm::vec3{0.0, 1.0, 0.0});
-      bcoord.push_back(glm::vec3{0.0, 0.0, 1.0});
+      // Second half does halfedges/edges/corners, not used for simple mode
+      if (simplePick) {
+        iFTri++;
+        continue;
+      }
+
+
+      // Fill the halfedge buffer with edge or halfedge data, depending on which are in use
+      // In the pick function we will use the halfedge to look up the edge if needed
+      // (this is an optimization to use one less array of values, because we hit implementation limits in the shader)
+
+      // == Build edge index data, if needed
+
+
+      if (edgesHaveBeenUsed || halfedgesHaveBeenUsed) {
+
+        const std::vector<uint32_t>& eDataVec =
+            (edgesHaveBeenUsed && !halfedgesHaveBeenUsed) ? triangleAllEdgeInds.data : triangleAllHalfedgeInds.data;
+        size_t offset =
+            (edgesHaveBeenUsed && !halfedgesHaveBeenUsed) ? edgeGlobalPickIndStart : halfedgeGlobalPickIndStart;
+
+        // clang-format off
+        std::array<glm::vec3, 3> eColor = { 
+          fColor, 
+          pick::indToVec(eDataVec[9*iFTri + 1] + offset), 
+          fColor
+        };
+        // clang-format on
+        if (j == 1) eColor[0] = pick::indToVec(eDataVec[9 * iFTri + 0] + offset);
+        if (j + 2 == D) eColor[2] = pick::indToVec(eDataVec[9 * iFTri + 2] + offset);
+
+        for (int j = 0; j < 3; j++) halfedgeColors.push_back(eColor);
+      } else {
+        for (int j = 0; j < 3; j++) halfedgeColors.push_back({fColor, fColor, fColor});
+      }
+
+      // == Build corner index data, if needed
+
+      if (cornersHaveBeenUsed) {
+        // clang-format off
+        std::array<glm::vec3, 3> cColor = { 
+          pick::indToVec(triangleCornerInds.data[3*iFTri + 0] + cornerGlobalPickIndStart), 
+          pick::indToVec(triangleCornerInds.data[3*iFTri + 1] + cornerGlobalPickIndStart), 
+          pick::indToVec(triangleCornerInds.data[3*iFTri + 2] + cornerGlobalPickIndStart), 
+        };
+        // clang-format on
+        for (int j = 0; j < 3; j++) cornerColors.push_back(cColor);
+      } else {
+        for (int j = 0; j < 3; j++) cornerColors.push_back({vColor[0], vColor[1], vColor[2]});
+      }
+
+      iFTri++;
     }
   }
 
   // Store data in buffers
-  pickProgram->setAttribute("a_position", positions);
-  pickProgram->setAttribute("a_barycoord", bcoord);
   pickProgram->setAttribute<glm::vec3, 3>("a_vertexColors", vertexColors);
-  pickProgram->setAttribute<glm::vec3, 3>("a_edgeColors", edgeColors);
-  pickProgram->setAttribute<glm::vec3, 3>("a_halfedgeColors", halfedgeColors);
   pickProgram->setAttribute("a_faceColor", faceColor);
-}
-
-void SurfaceMesh::fillGeometryBuffers(gl::GLProgram& p) {
-  if (shadeStyle == ShadeStyle::SMOOTH) {
-    fillGeometryBuffersSmooth(p);
-  } else if (shadeStyle == ShadeStyle::FLAT) {
-    fillGeometryBuffersFlat(p);
+  if (!simplePick) {
+    pickProgram->setAttribute<glm::vec3, 3>("a_halfedgeColors", halfedgeColors);
+    pickProgram->setAttribute<glm::vec3, 3>("a_cornerColors", cornerColors);
   }
 }
 
-void SurfaceMesh::fillGeometryBuffersSmooth(gl::GLProgram& p) {
-  std::vector<glm::vec3> positions;
-  std::vector<glm::vec3> normals;
-  std::vector<glm::vec3> bcoord;
 
-  bool wantsBary = p.hasAttribute("a_barycoord");
+std::vector<std::string> SurfaceMesh::addSurfaceMeshRules(std::vector<std::string> initRules, bool withMesh,
+                                                          bool withSurfaceShade) {
+  initRules = addStructureRules(initRules);
 
-  // Reserve space
-  positions.reserve(3 * nFacesTriangulation());
-  normals.reserve(3 * nFacesTriangulation());
-  if (wantsBary) {
-    bcoord.reserve(3 * nFacesTriangulation());
-  }
+  if (withMesh) {
 
-  for (size_t iF = 0; iF < nFaces(); iF++) {
-    auto& face = faces[iF];
-    size_t D = face.size();
+    if (withSurfaceShade) {
+      // rules that only get used when we're shading the surface of the mesh
+      if (getEdgeWidth() > 0) {
+        initRules.push_back("MESH_WIREFRAME");
+      }
 
-    // implicitly triangulate from root
-    size_t vRoot = face[0];
-    glm::vec3 pRoot = vertices[vRoot];
-    for (size_t j = 1; (j + 1) < D; j++) {
-      size_t vB = face[j];
-      glm::vec3 pB = vertices[vB];
-      size_t vC = face[(j + 1) % D];
-      glm::vec3 pC = vertices[vC];
+      if (shadeStyle.get() == MeshShadeStyle::TriFlat) {
+        initRules.push_back("MESH_COMPUTE_NORMAL_FROM_POSITION");
+      }
 
-      positions.push_back(pRoot);
-      positions.push_back(pB);
-      positions.push_back(pC);
-
-      normals.push_back(vertexNormals[vRoot]);
-      normals.push_back(vertexNormals[vB]);
-      normals.push_back(vertexNormals[vC]);
-
-      if (wantsBary) {
-        bcoord.push_back(glm::vec3{1., 0., 0.});
-        bcoord.push_back(glm::vec3{0., 1., 0.});
-        bcoord.push_back(glm::vec3{0., 0., 1.});
+      if (backFacePolicy.get() == BackFacePolicy::Different) {
+        initRules.push_back("MESH_BACKFACE_DARKEN");
+      }
+      if (backFacePolicy.get() == BackFacePolicy::Custom) {
+        initRules.push_back("MESH_BACKFACE_DIFFERENT");
       }
     }
-  }
 
-  // Store data in buffers
-  p.setAttribute("a_position", positions);
-  p.setAttribute("a_normal", normals);
-  if (wantsBary) {
-    p.setAttribute("a_barycoord", bcoord);
-  }
-}
+    if (backFacePolicy.get() == BackFacePolicy::Identical) {
+      initRules.push_back("MESH_BACKFACE_NORMAL_FLIP");
+    }
 
-void SurfaceMesh::fillGeometryBuffersFlat(gl::GLProgram& p) {
-  std::vector<glm::vec3> positions;
-  std::vector<glm::vec3> normals;
-  std::vector<glm::vec3> bcoord;
+    if (backFacePolicy.get() == BackFacePolicy::Different) {
+      initRules.push_back("MESH_BACKFACE_NORMAL_FLIP");
+    }
 
-  bool wantsBary = p.hasAttribute("a_barycoord");
+    if (backFacePolicy.get() == BackFacePolicy::Custom) {
+      initRules.push_back("MESH_BACKFACE_NORMAL_FLIP");
+    }
 
-  positions.reserve(3 * nFacesTriangulation());
-  normals.reserve(3 * nFacesTriangulation());
-  if (wantsBary) {
-    bcoord.reserve(3 * nFacesTriangulation());
-  }
-
-  for (size_t iF = 0; iF < nFaces(); iF++) {
-    auto& face = faces[iF];
-    size_t D = face.size();
-    glm::vec3 faceN = faceNormals[iF];
-
-    // implicitly triangulate from root
-    size_t vRoot = face[0];
-    glm::vec3 pRoot = vertices[vRoot];
-    for (size_t j = 1; (j + 1) < D; j++) {
-      size_t vB = face[j];
-      glm::vec3 pB = vertices[vB];
-      size_t vC = face[(j + 1) % D];
-      glm::vec3 pC = vertices[vC];
-
-      positions.push_back(pRoot);
-      positions.push_back(pB);
-      positions.push_back(pC);
-
-      normals.push_back(faceN);
-      normals.push_back(faceN);
-      normals.push_back(faceN);
-
-      if (wantsBary) {
-        bcoord.push_back(glm::vec3{1., 0., 0.});
-        bcoord.push_back(glm::vec3{0., 1., 0.});
-        bcoord.push_back(glm::vec3{0., 0., 1.});
-      }
+    if (wantsCullPosition()) {
+      initRules.push_back("MESH_PROPAGATE_CULLPOS");
     }
   }
+  return initRules;
+}
 
-
-  // Store data in buffers
-  p.setAttribute("a_position", positions);
-  p.setAttribute("a_normal", normals);
-  if (wantsBary) {
-    p.setAttribute("a_barycoord", bcoord);
+void SurfaceMesh::setSurfaceMeshUniforms(render::ShaderProgram& p) {
+  if (getEdgeWidth() > 0) {
+    p.setUniform("u_edgeWidth", getEdgeWidth() * render::engine->getCurrentPixelScaling());
+    p.setUniform("u_edgeColor", getEdgeColor());
+  }
+  if (backFacePolicy.get() == BackFacePolicy::Custom) {
+    p.setUniform("u_backfaceColor", getBackFaceColor());
+  }
+  if (shadeStyle.get() == MeshShadeStyle::TriFlat) {
+    glm::mat4 P = view::getCameraPerspectiveMatrix();
+    glm::mat4 Pinv = glm::inverse(P);
+    p.setUniform("u_invProjMatrix", glm::value_ptr(Pinv));
+    p.setUniform("u_viewport", render::engine->getCurrentViewport());
   }
 }
 
-void SurfaceMesh::fillGeometryBuffersWireframe(gl::GLProgram& p) {
-  std::vector<glm::vec3> positions;
-  std::vector<glm::vec3> normals;
-  std::vector<glm::vec3> bcoord;
-  std::vector<glm::vec3> edgeReal;
-
-  positions.reserve(3 * nFacesTriangulation());
-  normals.reserve(3 * nFacesTriangulation());
-  bcoord.reserve(3 * nFacesTriangulation());
-  edgeReal.reserve(3 * nFacesTriangulation());
-
-  for (size_t iF = 0; iF < nFaces(); iF++) {
-    auto& face = faces[iF];
-    size_t D = face.size();
-    glm::vec3 faceN = faceNormals[iF];
-
-    // implicitly triangulate from root
-    size_t vRoot = face[0];
-    glm::vec3 pRoot = vertices[vRoot];
-    for (size_t j = 1; (j + 1) < D; j++) {
-      size_t vB = face[j];
-      glm::vec3 pB = vertices[vB];
-      size_t vC = face[(j + 1) % D];
-      glm::vec3 pC = vertices[vC];
-
-      positions.push_back(pRoot);
-      positions.push_back(pB);
-      positions.push_back(pC);
-
-      normals.push_back(faceN);
-      normals.push_back(faceN);
-      normals.push_back(faceN);
-
-      bcoord.push_back(glm::vec3{1., 0., 0.});
-      bcoord.push_back(glm::vec3{0., 1., 0.});
-      bcoord.push_back(glm::vec3{0., 0., 1.});
-
-      glm::vec3 edgeRealV{0., 1., 0.};
-      if (j == 1) {
-        edgeRealV.x = 1.;
-      }
-      if (j + 2 == D) {
-        edgeRealV.z = 1.;
-      }
-      edgeReal.push_back(edgeRealV);
-      edgeReal.push_back(edgeRealV);
-      edgeReal.push_back(edgeRealV);
-    }
-  }
-
-
-  // Store data in buffers
-  p.setAttribute("a_position", positions);
-  p.setAttribute("a_normal", normals);
-  p.setAttribute("a_barycoord", bcoord);
-  p.setAttribute("a_edgeReal", edgeReal);
-}
 
 void SurfaceMesh::buildPickUI(size_t localPickID) {
 
@@ -595,30 +1032,24 @@ void SurfaceMesh::buildPickUI(size_t localPickID) {
     buildFaceInfoGui(localPickID - facePickIndStart);
   } else if (localPickID < halfedgePickIndStart) {
     buildEdgeInfoGui(localPickID - edgePickIndStart);
-  } else {
+  } else if (localPickID < cornerPickIndStart) {
     buildHalfedgeInfoGui(localPickID - halfedgePickIndStart);
+
+    if (edgesHaveBeenUsed) {
+      // do the edge one too (see not in pick buffer filler)
+      uint32_t halfedgeInd = localPickID - halfedgePickIndStart;
+      if (halfedgeInd >= halfedgeEdgeCorrespondence.size()) {
+        exception("problem with halfedge edge indices");
+      }
+      uint32_t edgeInd = halfedgeEdgeCorrespondence[halfedgeInd];
+
+      ImGui::NewLine();
+      buildEdgeInfoGui(edgeInd);
+    }
+  } else {
+    buildCornerInfoGui(localPickID - cornerPickIndStart);
   }
 }
-
-// void SurfaceMesh::getPickedElement(size_t localPickID, VertexPtr& vOut, FacePtr& fOut, EdgePtr& eOut,
-// HalfedgePtr& heOut) {
-
-// vOut = VertexPtr();
-// fOut = FacePtr();
-// eOut = EdgePtr();
-// heOut = HalfedgePtr();
-
-// if (localPickID < facePickIndStart) {
-// vOut = mesh->vertex(localPickID);
-//} else if (localPickID < edgePickIndStart) {
-// fOut = mesh->face(localPickID - facePickIndStart);
-//} else if (localPickID < halfedgePickIndStart) {
-// eOut = mesh->edge(localPickID - edgePickIndStart);
-//} else {
-// heOut = mesh->allHalfedge(localPickID - halfedgePickIndStart);
-//}
-//}
-
 
 glm::vec2 SurfaceMesh::projectToScreenSpace(glm::vec3 coord) {
 
@@ -630,111 +1061,13 @@ glm::vec2 SurfaceMesh::projectToScreenSpace(glm::vec3 coord) {
   return glm::vec2{screenPoint.x, screenPoint.y} / screenPoint.w;
 }
 
-// TODO fix up all of these
-// bool SurfaceMesh::screenSpaceTriangleTest(size_t fInd, glm::vec2 testCoords, glm::vec3& bCoordOut) {
-
-//// Get points in screen space
-// glm::vec2 p0 = projectToScreenSpace(geometry->position(f.halfedge().vertex()));
-// glm::vec2 p1 = projectToScreenSpace(geometry->position(f.halfedge().next().vertex()));
-// glm::vec2 p2 = projectToScreenSpace(geometry->position(f.halfedge().next().next().vertex()));
-
-//// Make sure triangle is positively oriented
-// if (glm::cross(p1 - p0, p2 - p0).z < 0) {
-// cout << "triangle not positively oriented" << endl;
-// return false;
-//}
-
-//// Test the point
-// glm::vec2 v0 = p1 - p0;
-// glm::vec2 v1 = p2 - p0;
-// glm::vec2 vT = testCoords - p0;
-
-// double dot00 = dot(v0, v0);
-// double dot01 = dot(v0, v1);
-// double dot0T = dot(v0, vT);
-// double dot11 = dot(v1, v1);
-// double dot1T = dot(v1, vT);
-
-// double denom = 1.0 / (dot00 * dot11 - dot01 * dot01);
-// double v = (dot11 * dot0T - dot01 * dot1T) * denom;
-// double w = (dot00 * dot1T - dot01 * dot0T) * denom;
-
-//// Check if point is in triangle
-// bool inTri = (v >= 0) && (w >= 0) && (v + w < 1);
-// if (!inTri) {
-// return false;
-//}
-
-// bCoordOut = glm::vec3{1.0 - v - w, v, w};
-// return true;
-//}
-
-/*
-void SurfaceMesh::getPickedFacePoint(FacePtr& fOut, glm::vec3& baryCoordOut) {
-
-  // Get the most recent pick data
-  size_t localInd;
-  Structure* pickStruct = pick::getCurrentPickElement(localInd);
-  if (pickStruct != this) {
-    fOut = FacePtr();
-    return;
-  }
-
-  // Build a list of all faces we might need to check
-  std::vector<FacePtr> facesToCheck;
-  if (localInd < facePickIndStart) {
-    VertexPtr v = mesh->vertex(localInd);
-    for (FacePtr f : v.adjacentFaces()) {
-      facesToCheck.push_back(f);
-    }
-  } else if (localInd < edgePickIndStart) {
-    FacePtr f = mesh->face(localInd - facePickIndStart);
-    facesToCheck.push_back(f);
-  } else if (localInd < halfedgePickIndStart) {
-    EdgePtr e = mesh->edge(localInd - edgePickIndStart);
-    facesToCheck.push_back(e.halfedge().face());
-    if (!e.isBoundary()) {
-      facesToCheck.push_back(e.halfedge().twin().face());
-    }
-  } else {
-    HalfedgePtr he = mesh->allHalfedge(localInd - halfedgePickIndStart);
-    facesToCheck.push_back(he.face());
-    if (he.twin().isReal()) {
-      facesToCheck.push_back(he.twin().face());
-    }
-  }
-
-  // Get the coordinates of the mouse (in its CURRENT position)
-  ImVec2 p = ImGui::GetMousePos();
-  ImGuiIO& io = ImGui::GetIO();
-  glm::vec2 mouseCoords{(2.0 * p.x) / view::windowWidth - 1.0, (2.0 * p.y) / view::windowHeight - 1.0};
-  mouseCoords.y *= -1;
-
-  // Test all candidate faces
-  for (FacePtr f : facesToCheck) {
-    bool hitTri = screenSpaceTriangleTest(f, mouseCoords, baryCoordOut);
-    if (hitTri) {
-      fOut = f;
-      return;
-    }
-  }
-
-  // None found, no intersection
-  fOut = FacePtr();
-}
-*/
-
-
 void SurfaceMesh::buildVertexInfoGui(size_t vInd) {
 
   size_t displayInd = vInd;
-  if (vertexPerm.size() > 0) {
-    displayInd = vertexPerm[vInd];
-  }
   ImGui::TextUnformatted(("Vertex #" + std::to_string(displayInd)).c_str());
 
   std::stringstream buffer;
-  buffer << vertices[vInd];
+  buffer << vertexPositions.getValue(vInd);
   ImGui::TextUnformatted(("Position: " + buffer.str()).c_str());
 
   ImGui::Spacing();
@@ -750,13 +1083,11 @@ void SurfaceMesh::buildVertexInfoGui(size_t vInd) {
   }
 
   ImGui::Indent(-20.);
+  ImGui::Columns(1);
 }
 
 void SurfaceMesh::buildFaceInfoGui(size_t fInd) {
   size_t displayInd = fInd;
-  if (facePerm.size() > 0) {
-    displayInd = facePerm[fInd];
-  }
   ImGui::TextUnformatted(("Face #" + std::to_string(displayInd)).c_str());
 
   ImGui::Spacing();
@@ -772,6 +1103,7 @@ void SurfaceMesh::buildFaceInfoGui(size_t fInd) {
   }
 
   ImGui::Indent(-20.);
+  ImGui::Columns(1);
 }
 
 void SurfaceMesh::buildEdgeInfoGui(size_t eInd) {
@@ -794,6 +1126,7 @@ void SurfaceMesh::buildEdgeInfoGui(size_t eInd) {
   }
 
   ImGui::Indent(-20.);
+  ImGui::Columns(1);
 }
 
 void SurfaceMesh::buildHalfedgeInfoGui(size_t heInd) {
@@ -816,6 +1149,27 @@ void SurfaceMesh::buildHalfedgeInfoGui(size_t heInd) {
   }
 
   ImGui::Indent(-20.);
+  ImGui::Columns(1);
+}
+
+void SurfaceMesh::buildCornerInfoGui(size_t cInd) {
+  size_t displayInd = cInd;
+  ImGui::TextUnformatted(("Corner #" + std::to_string(displayInd)).c_str());
+
+  ImGui::Spacing();
+  ImGui::Spacing();
+  ImGui::Spacing();
+  ImGui::Indent(20.);
+
+  // Build GUI to show the quantities
+  ImGui::Columns(2);
+  ImGui::SetColumnWidth(0, ImGui::GetWindowWidth() / 3);
+  for (auto& x : quantities) {
+    x.second->buildCornerInfoGUI(cInd);
+  }
+
+  ImGui::Indent(-20.);
+  ImGui::Columns(1);
 }
 
 
@@ -826,81 +1180,145 @@ void SurfaceMesh::buildCustomUI() {
   long long int nFacesL = static_cast<long long int>(nFaces());
   ImGui::Text("#verts: %lld  #faces: %lld", nVertsL, nFacesL);
 
-  { // colors
-    ImGui::ColorEdit3("Color", (float*)&surfaceColor, ImGuiColorEditFlags_NoInputs);
+  { // Colors
+    if (ImGui::ColorEdit3("Color", &surfaceColor.get()[0], ImGuiColorEditFlags_NoInputs))
+      setSurfaceColor(surfaceColor.get());
     ImGui::SameLine();
-    ImGui::PushItemWidth(100);
-    ImGui::ColorEdit3("Edge Color", (float*)&edgeColor, ImGuiColorEditFlags_NoInputs);
-    ImGui::PopItemWidth();
   }
+
 
   { // Flat shading or smooth shading?
     ImGui::SameLine();
-    bool ui_smoothshade = shadeStyle == ShadeStyle::SMOOTH;
-    if (ImGui::Checkbox("Smooth", &ui_smoothshade)) {
-      if (ui_smoothshade) {
-        setShadeStyle(ShadeStyle::SMOOTH);
-      } else {
-        setShadeStyle(ShadeStyle::FLAT);
-      }
-    }
-  }
+    ImGui::PushItemWidth(85);
 
-  { // Edge width
-    ImGui::PushItemWidth(100);
-    ImGui::SliderFloat("Edge Width", &edgeWidth, 0.0, 1., "%.5f", 2.);
+    auto styleName = [](const MeshShadeStyle& m) -> std::string {
+      switch (m) {
+      case MeshShadeStyle::Smooth:
+        return "Smooth";
+      case MeshShadeStyle::Flat:
+        return "Flat";
+      case MeshShadeStyle::TriFlat:
+        return "Tri Flat";
+      }
+      return "";
+    };
+
+    if (ImGui::BeginCombo("##Mode", styleName(getShadeStyle()).c_str())) {
+      for (MeshShadeStyle s : {MeshShadeStyle::Flat, MeshShadeStyle::Smooth, MeshShadeStyle::TriFlat}) {
+        std::string sName = styleName(s);
+        if (ImGui::Selectable(sName.c_str(), getShadeStyle() == s)) {
+          setShadeStyle(s);
+        }
+      }
+      ImGui::EndCombo();
+    }
+
     ImGui::PopItemWidth();
   }
+
+  { // Edge options
+    ImGui::SameLine();
+    ImGui::PushItemWidth(100);
+    if (edgeWidth.get() == 0.) {
+      bool showEdges = false;
+      if (ImGui::Checkbox("Edges", &showEdges)) {
+        setEdgeWidth(1.);
+      }
+    } else {
+      bool showEdges = true;
+      if (ImGui::Checkbox("Edges", &showEdges)) {
+        setEdgeWidth(0.);
+      }
+
+      // Edge color
+      ImGui::PushItemWidth(100);
+      if (ImGui::ColorEdit3("Edge Color", &edgeColor.get()[0], ImGuiColorEditFlags_NoInputs))
+        setEdgeColor(edgeColor.get());
+      ImGui::PopItemWidth();
+
+      // Edge width
+      ImGui::SameLine();
+      ImGui::PushItemWidth(75);
+      if (ImGui::SliderFloat("Width", &edgeWidth.get(), 0.001, 2.)) {
+        // NOTE: this intentionally circumvents the setEdgeWidth() setter to avoid repopulating the buffer as the
+        // slider is dragged---otherwise we repopulate the buffer on every change, which mostly works fine. This is a
+        // lazy solution instead of better state/buffer management. setEdgeWidth(getEdgeWidth());
+        edgeWidth.manuallyChanged();
+        requestRedraw();
+      }
+      ImGui::PopItemWidth();
+    }
+    ImGui::PopItemWidth();
+  }
+
+
+  { // Backface color (only visible if policy is selected)
+    if (backFacePolicy.get() == BackFacePolicy::Custom) {
+      if (ImGui::ColorEdit3("Backface Color", &backFaceColor.get()[0], ImGuiColorEditFlags_NoInputs))
+        setBackFaceColor(backFaceColor.get());
+    }
+  }
 }
 
-void SurfaceMesh::buildCustomOptionsUI() {}
 
-void SurfaceMesh::setShadeStyle(ShadeStyle newShadeStyle) {
-  shadeStyle = newShadeStyle;
-  geometryChanged();
+void SurfaceMesh::buildCustomOptionsUI() {
+  if (render::buildMaterialOptionsGui(material.get())) {
+    material.manuallyChanged();
+    setMaterial(material.get()); // trigger the other updates that happen on set()
+  }
+
+  // backfaces
+  if (ImGui::BeginMenu("Back Face Policy")) {
+    if (ImGui::MenuItem("identical shading", NULL, backFacePolicy.get() == BackFacePolicy::Identical))
+      setBackFacePolicy(BackFacePolicy::Identical);
+    if (ImGui::MenuItem("different shading", NULL, backFacePolicy.get() == BackFacePolicy::Different))
+      setBackFacePolicy(BackFacePolicy::Different);
+    if (ImGui::MenuItem("custom shading", NULL, backFacePolicy.get() == BackFacePolicy::Custom))
+      setBackFacePolicy(BackFacePolicy::Custom);
+    if (ImGui::MenuItem("cull", NULL, backFacePolicy.get() == BackFacePolicy::Cull))
+      setBackFacePolicy(BackFacePolicy::Cull);
+    ImGui::EndMenu();
+  }
 }
 
-void SurfaceMesh::geometryChanged() {
+void SurfaceMesh::recomputeGeometryIfPopulated() {
+  faceNormals.recomputeIfPopulated();
+  faceCenters.recomputeIfPopulated();
+  faceAreas.recomputeIfPopulated();
+  vertexNormals.recomputeIfPopulated();
+  vertexAreas.recomputeIfPopulated();
+  // edgeLengths.recomputeIfPopulated();
+}
+
+void SurfaceMesh::refresh() {
+  recomputeGeometryIfPopulated();
+
   program.reset();
-  wireframeProgram.reset();
   pickProgram.reset();
-
-  computeGeometryData();
-
-  for (auto& q : quantities) {
-    q.second->geometryChanged();
-  }
+  requestRedraw();
+  QuantityStructure<SurfaceMesh>::refresh(); // call base class version, which refreshes quantities
 }
 
-double SurfaceMesh::lengthScale() {
-  // Measure length scale as twice the radius from the center of the bounding box
-  auto bound = boundingBox();
-  glm::vec3 center = 0.5f * (std::get<0>(bound) + std::get<1>(bound));
+void SurfaceMesh::updateObjectSpaceBounds() {
 
-  double lengthScale = 0.0;
-  for (glm::vec3 p : vertices) {
-    glm::vec3 transPos = glm::vec3(objectTransform * glm::vec4(p.x, p.y, p.z, 1.0));
-    lengthScale = std::max(lengthScale, (double)glm::length2(transPos - center));
-  }
+  vertexPositions.ensureHostBufferPopulated();
 
-  return 2 * std::sqrt(lengthScale);
-}
-
-std::tuple<glm::vec3, glm::vec3> SurfaceMesh::boundingBox() {
+  // bounding box
   glm::vec3 min = glm::vec3{1, 1, 1} * std::numeric_limits<float>::infinity();
   glm::vec3 max = -glm::vec3{1, 1, 1} * std::numeric_limits<float>::infinity();
-
-  for (glm::vec3 pOrig : vertices) {
-    glm::vec3 p = glm::vec3(objectTransform * glm::vec4(pOrig, 1.0));
+  for (const glm::vec3& p : vertexPositions.data) {
     min = componentwiseMin(min, p);
     max = componentwiseMax(max, p);
   }
+  objectSpaceBoundingBox = std::make_tuple(min, max);
 
-  // Respect object transform
-  min = glm::vec3(glm::vec4(min.x, min.y, min.z, 1.0));
-  max = glm::vec3(glm::vec4(max.x, max.y, max.z, 1.0));
-
-  return std::make_tuple(min, max);
+  // length scale, as twice the radius from the center of the bounding box
+  glm::vec3 center = 0.5f * (min + max);
+  float lengthScale = 0.0;
+  for (const glm::vec3& p : vertexPositions.data) {
+    lengthScale = std::max(lengthScale, glm::length2(p - center));
+  }
+  objectSpaceLengthScale = 2 * std::sqrt(lengthScale);
 }
 
 std::string SurfaceMesh::typeName() { return structureTypeName; }
@@ -908,7 +1326,8 @@ std::string SurfaceMesh::typeName() { return structureTypeName; }
 long long int SurfaceMesh::selectVertex() {
 
   // Make sure we can see edges
-  edgeWidth = 1.;
+  float oldEdgeWidth = getEdgeWidth();
+  setEdgeWidth(1.);
   this->setEnabled(true);
 
   long long int returnVertInd = -1;
@@ -946,23 +1365,20 @@ long long int SurfaceMesh::selectVertex() {
 
     ImGuiIO& io = ImGui::GetIO();
     if (io.KeyCtrl && !io.WantCaptureMouse && ImGui::IsMouseClicked(0)) {
-      if (pick::pickIsFromThisFrame) {
 
-        ImGuiIO& io = ImGui::GetIO();
+      ImGuiIO& io = ImGui::GetIO();
 
-        // TODO fix semi-broken picking...
-        // API is a giant mess..
-        size_t pickInd;
-        ImVec2 p = ImGui::GetMousePos();
-        pick::evaluatePickQuery(io.DisplayFramebufferScale.x * p.x, io.DisplayFramebufferScale.y * p.y);
-        Structure* pickS = pick::getCurrentPickElement(pickInd);
+      // API is a giant mess..
+      size_t pickInd;
+      ImVec2 p = ImGui::GetMousePos();
+      std::pair<Structure*, size_t> pickVal =
+          pick::evaluatePickQuery(io.DisplayFramebufferScale.x * p.x, io.DisplayFramebufferScale.y * p.y);
 
-        if (pickS == this) {
+      if (pickVal.first == this) {
 
-          if (pickInd < nVertices()) {
-            returnVertInd = pickInd;
-            popContext();
-          }
+        if (pickVal.second < nVertices()) {
+          returnVertInd = pickVal.second;
+          popContext();
         }
       }
     }
@@ -971,157 +1387,136 @@ long long int SurfaceMesh::selectVertex() {
   // Pass control to the context we just created
   pushContext(focusedPopupUI);
 
+  setEdgeWidth(oldEdgeWidth); // restore edge setting
+
   return returnVertInd;
 }
 
-/*
-FacePtr SurfaceMesh::selectFace() {
 
-  // Make sure we can see edges
-  edgeWidth = 1.;
-  enabled = true;
-
-  // Create a new context
-  ImGuiContext* oldContext = ImGui::GetCurrentContext();
-  ImGuiContext* newContext = ImGui::CreateContext(getGlobalFontAtlas());
-  ImGui::SetCurrentContext(newContext);
-  initializeImGUIContext();
-  FacePtr returnFace;
-  int iF = 0;
-
-  // Register the callback which creates the UI and does the hard work
-  focusedPopupUI = [&]() {
-    { // Create a window with instruction and a close button.
-      static bool showWindow = true;
-      ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_Once);
-      ImGui::Begin("Select face", &showWindow);
-
-      ImGui::PushItemWidth(300);
-      ImGui::TextUnformatted("Hold ctrl and left-click to select a face");
-      ImGui::Separator();
-
-      // Pick by number
-      ImGui::PushItemWidth(300);
-      ImGui::InputInt("index", &iF);
-      if (ImGui::Button("Select by index")) {
-        if (iF >= 0 && (size_t)iF < mesh->nFaces()) {
-          returnFace = mesh->face(iF);
-          focusedPopupUI = nullptr;
-        }
-      }
-      ImGui::PopItemWidth();
-
-      ImGui::Separator();
-      if (ImGui::Button("Abort")) {
-        focusedPopupUI = nullptr;
-      }
-    }
-
-    ImGuiIO& io = ImGui::GetIO();
-    if (io.KeyCtrl && !io.WantCaptureMouse && ImGui::IsMouseClicked(0)) {
-      if (pick::pickIsFromThisFrame) {
-        size_t pickInd;
-        Structure* pickS = pick::getCurrentPickElement(pickInd);
-
-        if (pickS == this) {
-          VertexPtr v;
-          EdgePtr e;
-          FacePtr f;
-          HalfedgePtr he;
-          getPickedElement(pickInd, v, f, e, he);
-
-          if (f != FacePtr()) {
-            returnFace = f;
-            focusedPopupUI = nullptr;
-          }
-        }
-      }
-    }
-
-    ImGui::End();
-  };
-
-
-  // Re-enter main loop
-  while (focusedPopupUI) {
-    mainLoopIteration();
-  }
-
-  // Restore the old context
-  ImGui::SetCurrentContext(oldContext);
-  ImGui::DestroyContext(newContext);
-
-  if (returnFace == FacePtr()) return returnFace;
-
-  return transfer.fMapBack[returnFace];
+void SurfaceMesh::markEdgesAsUsed() {
+  if (edgesHaveBeenUsed) return;
+  edgesHaveBeenUsed = true;
+  // immediately compute edge-related connectivity info, and also repopulate the pick buffer so edges can be picked
+  computeTriangleAllEdgeInds();
+  pickProgram.reset();
 }
-*/
 
-SurfaceMeshQuantity::SurfaceMeshQuantity(std::string name, SurfaceMesh& parentStructure, bool dominates)
-    : Quantity<SurfaceMesh>(name, parentStructure, dominates) {}
-void SurfaceMeshQuantity::geometryChanged() {}
-void SurfaceMeshQuantity::buildVertexInfoGUI(size_t vInd) {}
-void SurfaceMeshQuantity::buildFaceInfoGUI(size_t fInd) {}
-void SurfaceMeshQuantity::buildEdgeInfoGUI(size_t eInd) {}
-void SurfaceMeshQuantity::buildHalfedgeInfoGUI(size_t heInd) {}
+void SurfaceMesh::markHalfedgesAsUsed() {
+  if (halfedgesHaveBeenUsed) return;
+  halfedgesHaveBeenUsed = true;
+  // repopulate the pick buffer so halfedges can be picked
+  pickProgram.reset();
+}
 
+void SurfaceMesh::markCornersAsUsed() {
+  if (cornersHaveBeenUsed) return;
+  cornersHaveBeenUsed = true;
+  // repopulate the pick buffer so corners can be picked
+  pickProgram.reset();
+}
+
+// === Option getters and setters
+
+// DEPRECATED!
+SurfaceMesh* SurfaceMesh::setSmoothShade(bool isSmooth) {
+  if (isSmooth) {
+    return setShadeStyle(MeshShadeStyle::Smooth);
+  } else {
+    return setShadeStyle(MeshShadeStyle::Flat);
+  }
+}
+// DEPRECATED!
+bool SurfaceMesh::isSmoothShade() { return getShadeStyle() == MeshShadeStyle::Smooth; }
+
+SurfaceMesh* SurfaceMesh::setBackFaceColor(glm::vec3 val) {
+  backFaceColor.set(val);
+  requestRedraw();
+  return this;
+}
+
+glm::vec3 SurfaceMesh::getBackFaceColor() { return backFaceColor.get(); }
+
+SurfaceMesh* SurfaceMesh::setSurfaceColor(glm::vec3 val) {
+  surfaceColor = val;
+  requestRedraw();
+  return this;
+}
+glm::vec3 SurfaceMesh::getSurfaceColor() { return surfaceColor.get(); }
+
+SurfaceMesh* SurfaceMesh::setEdgeColor(glm::vec3 val) {
+  edgeColor = val;
+  requestRedraw();
+  return this;
+}
+glm::vec3 SurfaceMesh::getEdgeColor() { return edgeColor.get(); }
+
+SurfaceMesh* SurfaceMesh::setMaterial(std::string m) {
+  material = m;
+  refresh(); // (serves the purpose of re-initializing everything, though this is a bit overkill)
+  requestRedraw();
+  return this;
+}
+std::string SurfaceMesh::getMaterial() { return material.get(); }
+
+SurfaceMesh* SurfaceMesh::setEdgeWidth(double newVal) {
+  edgeWidth = newVal;
+  refresh();
+  requestRedraw();
+  return this;
+}
+double SurfaceMesh::getEdgeWidth() { return edgeWidth.get(); }
+
+SurfaceMesh* SurfaceMesh::setBackFacePolicy(BackFacePolicy newPolicy) {
+  backFacePolicy = newPolicy;
+  refresh();
+  requestRedraw();
+  return this;
+}
+BackFacePolicy SurfaceMesh::getBackFacePolicy() { return backFacePolicy.get(); }
+
+SurfaceMesh* SurfaceMesh::setShadeStyle(MeshShadeStyle newStyle) {
+  shadeStyle = newStyle;
+  refresh();
+  requestRedraw();
+  return this;
+}
+MeshShadeStyle SurfaceMesh::getShadeStyle() { return shadeStyle.get(); }
 
 // === Quantity adders
 
 
 SurfaceVertexColorQuantity* SurfaceMesh::addVertexColorQuantityImpl(std::string name,
                                                                     const std::vector<glm::vec3>& colors) {
-  SurfaceVertexColorQuantity* q = new SurfaceVertexColorQuantity(name, applyPermutation(colors, vertexPerm), *this);
+  SurfaceVertexColorQuantity* q = new SurfaceVertexColorQuantity(name, *this, colors);
   addQuantity(q);
   return q;
 }
 
 SurfaceFaceColorQuantity* SurfaceMesh::addFaceColorQuantityImpl(std::string name,
                                                                 const std::vector<glm::vec3>& colors) {
-  SurfaceFaceColorQuantity* q = new SurfaceFaceColorQuantity(name, applyPermutation(colors, facePerm), *this);
+  SurfaceFaceColorQuantity* q = new SurfaceFaceColorQuantity(name, *this, colors);
   addQuantity(q);
   return q;
 }
 
-SurfaceVertexCountQuantity* SurfaceMesh::addVertexCountQuantityImpl(std::string name,
-                                                                    const std::vector<std::pair<size_t, int>>& values) {
+SurfaceVertexScalarQuantity* SurfaceMesh::addVertexDistanceQuantityImpl(std::string name,
+                                                                        const std::vector<double>& data) {
+  SurfaceVertexScalarQuantity* q = new SurfaceVertexScalarQuantity(name, data, *this, DataType::MAGNITUDE);
 
-  SurfaceVertexCountQuantity* q = new SurfaceVertexCountQuantity(name, values, *this);
+  q->setIsolinesEnabled(true);
+  q->setIsolineWidth(0.02, true);
+
   addQuantity(q);
   return q;
 }
 
-SurfaceVertexIsolatedScalarQuantity*
-SurfaceMesh::addVertexIsolatedScalarQuantityImpl(std::string name,
-                                                 const std::vector<std::pair<size_t, double>>& values) {
-  SurfaceVertexIsolatedScalarQuantity* q = new SurfaceVertexIsolatedScalarQuantity(name, values, *this);
-  addQuantity(q);
-  return q;
-}
+SurfaceVertexScalarQuantity* SurfaceMesh::addVertexSignedDistanceQuantityImpl(std::string name,
+                                                                              const std::vector<double>& data) {
+  SurfaceVertexScalarQuantity* q = new SurfaceVertexScalarQuantity(name, data, *this, DataType::SYMMETRIC);
 
-SurfaceFaceCountQuantity* SurfaceMesh::addFaceCountQuantityImpl(std::string name,
-                                                                const std::vector<std::pair<size_t, int>>& values) {
-  SurfaceFaceCountQuantity* q = new SurfaceFaceCountQuantity(name, values, *this);
-  addQuantity(q);
-  return q;
-}
+  q->setIsolinesEnabled(true);
+  q->setIsolineWidth(0.02, true);
 
-SurfaceDistanceQuantity* SurfaceMesh::addVertexDistanceQuantityImpl(std::string name, const std::vector<double>& data) {
-  SurfaceDistanceQuantity* q = new SurfaceDistanceQuantity(name, applyPermutation(data, vertexPerm), *this, false);
-  addQuantity(q);
-  return q;
-}
-
-SurfaceDistanceQuantity* SurfaceMesh::addVertexSignedDistanceQuantityImpl(std::string name,
-                                                                          const std::vector<double>& data) {
-  SurfaceDistanceQuantity* q = new SurfaceDistanceQuantity(name, applyPermutation(data, vertexPerm), *this, true);
-  addQuantity(q);
-  return q;
-}
-
-SurfaceGraphQuantity* SurfaceMesh::addSurfaceGraphQuantityImpl(std::string name, const std::vector<glm::vec3>& nodes,
-                                                               const std::vector<std::array<size_t, 2>>& edges) {
-  SurfaceGraphQuantity* q = new SurfaceGraphQuantity(name, nodes, edges, *this);
   addQuantity(q);
   return q;
 }
@@ -1130,9 +1525,9 @@ SurfaceCornerParameterizationQuantity*
 SurfaceMesh::addParameterizationQuantityImpl(std::string name, const std::vector<glm::vec2>& coords,
                                              ParamCoordsType type) {
   SurfaceCornerParameterizationQuantity* q =
-      new SurfaceCornerParameterizationQuantity(name, applyPermutation(coords, cornerPerm), type, *this);
+      new SurfaceCornerParameterizationQuantity(name, *this, coords, type, ParamVizStyle::CHECKER);
   addQuantity(q);
-
+  markCornersAsUsed();
   return q;
 }
 
@@ -1140,7 +1535,7 @@ SurfaceVertexParameterizationQuantity*
 SurfaceMesh::addVertexParameterizationQuantityImpl(std::string name, const std::vector<glm::vec2>& coords,
                                                    ParamCoordsType type) {
   SurfaceVertexParameterizationQuantity* q =
-      new SurfaceVertexParameterizationQuantity(name, applyPermutation(coords, vertexPerm), type, *this);
+      new SurfaceVertexParameterizationQuantity(name, *this, coords, type, ParamVizStyle::CHECKER);
   addQuantity(q);
 
   return q;
@@ -1150,26 +1545,22 @@ SurfaceVertexParameterizationQuantity*
 SurfaceMesh::addLocalParameterizationQuantityImpl(std::string name, const std::vector<glm::vec2>& coords,
                                                   ParamCoordsType type) {
   SurfaceVertexParameterizationQuantity* q =
-      new SurfaceVertexParameterizationQuantity(name, applyPermutation(coords, vertexPerm), type, *this);
+      new SurfaceVertexParameterizationQuantity(name, *this, coords, type, ParamVizStyle::LOCAL_CHECK);
   addQuantity(q);
-
-  q->setStyle(ParamVizStyle::LOCAL_CHECK);
 
   return q;
 }
 
-
 SurfaceVertexScalarQuantity* SurfaceMesh::addVertexScalarQuantityImpl(std::string name, const std::vector<double>& data,
                                                                       DataType type) {
-  SurfaceVertexScalarQuantity* q =
-      new SurfaceVertexScalarQuantity(name, applyPermutation(data, vertexPerm), *this, type);
+  SurfaceVertexScalarQuantity* q = new SurfaceVertexScalarQuantity(name, data, *this, type);
   addQuantity(q);
   return q;
 }
 
 SurfaceFaceScalarQuantity* SurfaceMesh::addFaceScalarQuantityImpl(std::string name, const std::vector<double>& data,
                                                                   DataType type) {
-  SurfaceFaceScalarQuantity* q = new SurfaceFaceScalarQuantity(name, applyPermutation(data, facePerm), *this, type);
+  SurfaceFaceScalarQuantity* q = new SurfaceFaceScalarQuantity(name, data, *this, type);
   addQuantity(q);
   return q;
 }
@@ -1177,24 +1568,32 @@ SurfaceFaceScalarQuantity* SurfaceMesh::addFaceScalarQuantityImpl(std::string na
 
 SurfaceEdgeScalarQuantity* SurfaceMesh::addEdgeScalarQuantityImpl(std::string name, const std::vector<double>& data,
                                                                   DataType type) {
-  SurfaceEdgeScalarQuantity* q = new SurfaceEdgeScalarQuantity(name, applyPermutation(data, edgePerm), *this, type);
+  SurfaceEdgeScalarQuantity* q = new SurfaceEdgeScalarQuantity(name, data, *this, type);
   addQuantity(q);
+  markEdgesAsUsed();
   return q;
 }
 
 SurfaceHalfedgeScalarQuantity*
 SurfaceMesh::addHalfedgeScalarQuantityImpl(std::string name, const std::vector<double>& data, DataType type) {
-  SurfaceHalfedgeScalarQuantity* q =
-      new SurfaceHalfedgeScalarQuantity(name, applyPermutation(data, halfedgePerm), *this, type);
+  SurfaceHalfedgeScalarQuantity* q = new SurfaceHalfedgeScalarQuantity(name, data, *this, type);
   addQuantity(q);
+  markHalfedgesAsUsed();
+  return q;
+}
+
+SurfaceCornerScalarQuantity* SurfaceMesh::addCornerScalarQuantityImpl(std::string name, const std::vector<double>& data,
+                                                                      DataType type) {
+  SurfaceCornerScalarQuantity* q = new SurfaceCornerScalarQuantity(name, data, *this, type);
+  addQuantity(q);
+  markCornersAsUsed();
   return q;
 }
 
 SurfaceVertexVectorQuantity* SurfaceMesh::addVertexVectorQuantityImpl(std::string name,
                                                                       const std::vector<glm::vec3>& vectors,
                                                                       VectorType vectorType) {
-  SurfaceVertexVectorQuantity* q =
-      new SurfaceVertexVectorQuantity(name, applyPermutation(vectors, vertexPerm), *this, vectorType);
+  SurfaceVertexVectorQuantity* q = new SurfaceVertexVectorQuantity(name, vectors, *this, vectorType);
   addQuantity(q);
   return q;
 }
@@ -1202,84 +1601,51 @@ SurfaceVertexVectorQuantity* SurfaceMesh::addVertexVectorQuantityImpl(std::strin
 SurfaceFaceVectorQuantity*
 SurfaceMesh::addFaceVectorQuantityImpl(std::string name, const std::vector<glm::vec3>& vectors, VectorType vectorType) {
 
-  SurfaceFaceVectorQuantity* q =
-      new SurfaceFaceVectorQuantity(name, applyPermutation(vectors, facePerm), *this, vectorType);
+  SurfaceFaceVectorQuantity* q = new SurfaceFaceVectorQuantity(name, vectors, *this, vectorType);
   addQuantity(q);
   return q;
 }
 
-SurfaceFaceIntrinsicVectorQuantity*
-SurfaceMesh::addFaceIntrinsicVectorQuantityImpl(std::string name, const std::vector<glm::vec2>& vectors, int nSym,
-                                                VectorType vectorType) {
+SurfaceFaceTangentVectorQuantity* SurfaceMesh::addFaceTangentVectorQuantityImpl(std::string name,
+                                                                                const std::vector<glm::vec2>& vectors,
+                                                                                const std::vector<glm::vec3>& basisX,
+                                                                                const std::vector<glm::vec3>& basisY,
+                                                                                int nSym, VectorType vectorType) {
 
-  SurfaceFaceIntrinsicVectorQuantity* q =
-      new SurfaceFaceIntrinsicVectorQuantity(name, applyPermutation(vectors, facePerm), *this, nSym, vectorType);
+  SurfaceFaceTangentVectorQuantity* q =
+      new SurfaceFaceTangentVectorQuantity(name, vectors, basisX, basisY, *this, nSym, vectorType);
   addQuantity(q);
   return q;
 }
 
 
-SurfaceVertexIntrinsicVectorQuantity*
-SurfaceMesh::addVertexIntrinsicVectorQuantityImpl(std::string name, const std::vector<glm::vec2>& vectors, int nSym,
-                                                  VectorType vectorType) {
-  SurfaceVertexIntrinsicVectorQuantity* q =
-      new SurfaceVertexIntrinsicVectorQuantity(name, applyPermutation(vectors, vertexPerm), *this, nSym, vectorType);
+SurfaceVertexTangentVectorQuantity*
+SurfaceMesh::addVertexTangentVectorQuantityImpl(std::string name, const std::vector<glm::vec2>& vectors,
+                                                const std::vector<glm::vec3>& basisX,
+                                                const std::vector<glm::vec3>& basisY, int nSym, VectorType vectorType) {
+  SurfaceVertexTangentVectorQuantity* q =
+      new SurfaceVertexTangentVectorQuantity(name, vectors, basisX, basisY, *this, nSym, vectorType);
   addQuantity(q);
   return q;
 }
 
 // Orientations is `true` if the canonical orientation of the edge points from the lower-indexed vertex to the
 // higher-indexed vertex, and `false` otherwise.
-SurfaceOneFormIntrinsicVectorQuantity*
-SurfaceMesh::addOneFormIntrinsicVectorQuantityImpl(std::string name, const std::vector<double>& data,
-                                                   const std::vector<char>& orientations) {
-  SurfaceOneFormIntrinsicVectorQuantity* q = new SurfaceOneFormIntrinsicVectorQuantity(
-      name, applyPermutation(data, edgePerm), applyPermutation(orientations, edgePerm), *this);
+SurfaceOneFormTangentVectorQuantity*
+SurfaceMesh::addOneFormTangentVectorQuantityImpl(std::string name, const std::vector<double>& data,
+                                                 const std::vector<char>& orientations) {
+  SurfaceOneFormTangentVectorQuantity* q = new SurfaceOneFormTangentVectorQuantity(name, data, orientations, *this);
   addQuantity(q);
+  markEdgesAsUsed();
   return q;
 }
 
-void SurfaceMesh::setVertexTangentBasisXImpl(const std::vector<glm::vec3>& vectors) {
-
-  std::vector<glm::vec3> inputBasisX = applyPermutation(vectors, vertexPerm);
-  vertexTangentSpaces.resize(nVertices());
-
-  for (size_t iV = 0; iV < nVertices(); iV++) {
-
-    glm::vec3 basisX = inputBasisX[iV];
-    glm::vec3 normal = vertexNormals[iV];
-
-    // Project in to tangent defined by our normals
-    basisX = glm::normalize(basisX - normal * glm::dot(normal, basisX));
-
-    // Let basis Y complete the frame
-    glm::vec3 basisY = glm::cross(normal, basisX);
-
-    vertexTangentSpaces[iV][0] = basisX;
-    vertexTangentSpaces[iV][1] = basisY;
-  }
-}
-
-void SurfaceMesh::setFaceTangentBasisXImpl(const std::vector<glm::vec3>& vectors) {
-
-  std::vector<glm::vec3> inputBasisX = applyPermutation(vectors, facePerm);
-  faceTangentSpaces.resize(nFaces());
-
-  for (size_t iF = 0; iF < nFaces(); iF++) {
-
-    glm::vec3 basisX = inputBasisX[iF];
-    glm::vec3 normal = faceNormals[iF];
-
-    // Project in to tangent defined by our normals
-    basisX = glm::normalize(basisX - normal * glm::dot(normal, basisX));
-
-    // Let basis Y complete the frame
-    glm::vec3 basisY = glm::cross(normal, basisX);
-
-    faceTangentSpaces[iF][0] = basisX;
-    faceTangentSpaces[iF][1] = basisY;
-  }
-}
-
+SurfaceMeshQuantity::SurfaceMeshQuantity(std::string name, SurfaceMesh& parentStructure, bool dominates)
+    : QuantityS<SurfaceMesh>(name, parentStructure, dominates) {}
+void SurfaceMeshQuantity::buildVertexInfoGUI(size_t vInd) {}
+void SurfaceMeshQuantity::buildFaceInfoGUI(size_t fInd) {}
+void SurfaceMeshQuantity::buildEdgeInfoGUI(size_t eInd) {}
+void SurfaceMeshQuantity::buildHalfedgeInfoGUI(size_t heInd) {}
+void SurfaceMeshQuantity::buildCornerInfoGUI(size_t cInd) {}
 
 } // namespace polyscope

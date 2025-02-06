@@ -1,4 +1,5 @@
-// Copyright 2017-2019, Nicholas Sharp and the Polyscope contributors. http://polyscope.run.
+// Copyright 2017-2023, Nicholas Sharp and the Polyscope contributors. https://polyscope.run
+
 #pragma once
 
 namespace polyscope {
@@ -7,6 +8,8 @@ namespace polyscope {
 // Shorthand to add a curve network to polyscope
 template <class P, class E>
 CurveNetwork* registerCurveNetwork(std::string name, const P& nodes, const E& edges) {
+  checkInitialized();
+
   CurveNetwork* s = new CurveNetwork(name, standardizeVectorArray<glm::vec3, 3>(nodes),
                                      standardizeVectorArray<std::array<size_t, 2>, 2>(edges));
   bool success = registerStructure(s);
@@ -17,6 +20,8 @@ CurveNetwork* registerCurveNetwork(std::string name, const P& nodes, const E& ed
 }
 template <class P, class E>
 CurveNetwork* registerCurveNetwork2D(std::string name, const P& nodes, const E& edges) {
+  checkInitialized();
+
   std::vector<glm::vec3> points3D(standardizeVectorArray<glm::vec3, 2>(nodes));
   for (auto& v : points3D) {
     v.z = 0.;
@@ -33,9 +38,11 @@ CurveNetwork* registerCurveNetwork2D(std::string name, const P& nodes, const E& 
 // Shorthand to add curve from a line of points
 template <class P>
 CurveNetwork* registerCurveNetworkLine(std::string name, const P& nodes) {
+  checkInitialized();
 
   std::vector<std::array<size_t, 2>> edges;
-  for (size_t iE = 1; iE < nodes.size(); iE++) {
+  size_t N = adaptorF_size(nodes);
+  for (size_t iE = 1; iE < N; iE++) {
     edges.push_back({iE - 1, iE});
   }
 
@@ -48,11 +55,64 @@ CurveNetwork* registerCurveNetworkLine(std::string name, const P& nodes) {
 }
 template <class P>
 CurveNetwork* registerCurveNetworkLine2D(std::string name, const P& nodes) {
+  checkInitialized();
 
   std::vector<std::array<size_t, 2>> edges;
-  for (size_t iE = 1; iE < nodes.size(); iE++) {
+  size_t N = adaptorF_size(nodes);
+  for (size_t iE = 1; iE < N; iE++) {
     edges.push_back({iE - 1, iE});
   }
+  std::vector<glm::vec3> points3D(standardizeVectorArray<glm::vec3, 2>(nodes));
+  for (auto& v : points3D) {
+    v.z = 0.;
+  }
+
+  CurveNetwork* s = new CurveNetwork(name, points3D, edges);
+  bool success = registerStructure(s);
+  if (!success) {
+    safeDelete(s);
+  }
+  return s;
+}
+
+
+template <class P>
+CurveNetwork* registerCurveNetworkSegments(std::string name, const P& nodes) {
+  checkInitialized();
+
+  std::vector<std::array<size_t, 2>> edges;
+  size_t N = adaptorF_size(nodes);
+
+  if (N % 2 != 0) {
+    exception("registerCurveNetworkSegments should have an even number of nodes");
+  }
+
+  for (size_t iE = 0; iE < N; iE += 2) {
+    edges.push_back({iE, iE + 1});
+  }
+
+  CurveNetwork* s = new CurveNetwork(name, standardizeVectorArray<glm::vec3, 3>(nodes), edges);
+  bool success = registerStructure(s);
+  if (!success) {
+    safeDelete(s);
+  }
+  return s;
+}
+template <class P>
+CurveNetwork* registerCurveNetworkSegments2D(std::string name, const P& nodes) {
+  checkInitialized();
+
+  std::vector<std::array<size_t, 2>> edges;
+  size_t N = adaptorF_size(nodes);
+
+  if (N % 2 != 0) {
+    exception("registerCurveNetworkSegments2D should have an even number of nodes");
+  }
+
+  for (size_t iE = 0; iE < N; iE += 2) {
+    edges.push_back({iE, iE + 1});
+  }
+
   std::vector<glm::vec3> points3D(standardizeVectorArray<glm::vec3, 2>(nodes));
   for (auto& v : points3D) {
     v.z = 0.;
@@ -69,10 +129,12 @@ CurveNetwork* registerCurveNetworkLine2D(std::string name, const P& nodes) {
 // Shorthand to add curve from a loop of points
 template <class P>
 CurveNetwork* registerCurveNetworkLoop(std::string name, const P& nodes) {
+  checkInitialized();
 
   std::vector<std::array<size_t, 2>> edges;
-  for (size_t iE = 0; iE < nodes.size(); iE++) {
-    edges.push_back({iE, (iE + 1) % nodes.size()});
+  size_t N = adaptorF_size(nodes);
+  for (size_t iE = 0; iE < N; iE++) {
+    edges.push_back({iE, (iE + 1) % N});
   }
 
   CurveNetwork* s = new CurveNetwork(name, standardizeVectorArray<glm::vec3, 3>(nodes), edges);
@@ -84,10 +146,12 @@ CurveNetwork* registerCurveNetworkLoop(std::string name, const P& nodes) {
 }
 template <class P>
 CurveNetwork* registerCurveNetworkLoop2D(std::string name, const P& nodes) {
+  checkInitialized();
 
   std::vector<std::array<size_t, 2>> edges;
-  for (size_t iE = 0; iE < nodes.size(); iE++) {
-    edges.push_back({iE, (iE + 1) % nodes.size()});
+  size_t N = adaptorF_size(nodes);
+  for (size_t iE = 0; iE < N; iE++) {
+    edges.push_back({iE, (iE + 1) % N});
   }
   std::vector<glm::vec3> points3D(standardizeVectorArray<glm::vec3, 2>(nodes));
   for (auto& v : points3D) {
@@ -105,21 +169,16 @@ CurveNetwork* registerCurveNetworkLoop2D(std::string name, const P& nodes) {
 
 template <class V>
 void CurveNetwork::updateNodePositions(const V& newPositions) {
-  nodes = standardizeVectorArray<glm::vec3, 3>(newPositions);
-
-  nodeProgram.reset();
-  edgeProgram.reset();
-  nodePickProgram.reset();
-  edgePickProgram.reset();
-
-  for (auto& q : quantities) {
-    q.second->geometryChanged();
-  }
+  validateSize(newPositions, nNodes(), "newPositions");
+  nodePositions.data = standardizeVectorArray<glm::vec3, 3>(newPositions);
+  nodePositions.markHostBufferUpdated();
+  recomputeGeometryIfPopulated();
 }
 
 
 template <class V>
 void CurveNetwork::updateNodePositions2D(const V& newPositions2D) {
+  validateSize(newPositions2D, nNodes(), "newPositions2D");
   std::vector<glm::vec3> positions3D = standardizeVectorArray<glm::vec3, 2>(newPositions2D);
   for (glm::vec3& v : positions3D) {
     v.z = 0.;
@@ -132,6 +191,10 @@ void CurveNetwork::updateNodePositions2D(const V& newPositions2D) {
 // Shorthand to get a curve network from polyscope
 inline CurveNetwork* getCurveNetwork(std::string name) {
   return dynamic_cast<CurveNetwork*>(getStructure(CurveNetwork::structureTypeName, name));
+}
+inline bool hasCurveNetwork(std::string name) { return hasStructure(CurveNetwork::structureTypeName, name); }
+inline void removeCurveNetwork(std::string name, bool errorIfAbsent) {
+  removeStructure(CurveNetwork::structureTypeName, name, errorIfAbsent);
 }
 
 

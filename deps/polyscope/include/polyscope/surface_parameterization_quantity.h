@@ -1,10 +1,13 @@
-// Copyright 2017-2019, Nicholas Sharp and the Polyscope contributors. http://polyscope.run.
+// Copyright 2017-2023, Nicholas Sharp and the Polyscope contributors. https://polyscope.run
+
 #pragma once
 
 #include "polyscope/affine_remapper.h"
 #include "polyscope/histogram.h"
+#include "polyscope/parameterization_quantity.h"
+#include "polyscope/render/color_maps.h"
+#include "polyscope/render/engine.h"
 #include "polyscope/surface_mesh.h"
-#include "polyscope/surface_parameterization_enums.h"
 
 
 namespace polyscope {
@@ -15,44 +18,24 @@ namespace polyscope {
 // ==============================================================
 
 
-class SurfaceParameterizationQuantity : public SurfaceMeshQuantity {
+class SurfaceParameterizationQuantity : public SurfaceMeshQuantity,
+                                        public ParameterizationQuantity<SurfaceParameterizationQuantity> {
 
 public:
-  SurfaceParameterizationQuantity(std::string name, ParamCoordsType type_, SurfaceMesh& mesh_);
+  SurfaceParameterizationQuantity(std::string name, SurfaceMesh& mesh_, const std::vector<glm::vec2>& coords_,
+                                  ParamCoordsType type_, ParamVizStyle style_);
 
-  void draw() override;
+  virtual void draw() override;
+  virtual void refresh() override;
   virtual void buildCustomUI() override;
 
-  virtual void geometryChanged() override;
-
-
-  // === Members
-  ParamCoordsType coordsType;
-
-  // The program which does the drawing
-  std::unique_ptr<gl::GLProgram> program;
-
-  // === Viz stuff
-  // to keep things simple, has settings for all of the viz styles, even though not all are used at all times
-
-  SurfaceParameterizationQuantity* setStyle(ParamVizStyle newStyle);
-
-  float modLen = .05; // for all, period of the checker / stripes
-
-  glm::vec3 checkColor1, checkColor2; // for checker (two colors to use)
-
-  glm::vec3 gridLineColor, gridBackgroundColor; // for GRID (two colors to use)
-
-  gl::ColorMapID cMap = gl::ColorMapID::PHASE; // for LOCAL (color map index)
-  float localRot = 0.;                         // for LOCAL (angular shift, in radians)
 
 protected:
-  ParamVizStyle vizStyle = ParamVizStyle::CHECKER;
+  std::shared_ptr<render::ShaderProgram> program;
 
   // Helpers
   void createProgram();
-  void setProgramUniforms(gl::GLProgram& program);
-  virtual void fillColorBuffers(gl::GLProgram& p) = 0;
+  virtual void fillCoordBuffers(render::ShaderProgram& p) = 0;
 };
 
 
@@ -63,17 +46,14 @@ protected:
 class SurfaceCornerParameterizationQuantity : public SurfaceParameterizationQuantity {
 
 public:
-  SurfaceCornerParameterizationQuantity(std::string name, std::vector<glm::vec2> values_, ParamCoordsType type_,
-                                        SurfaceMesh& mesh_);
+  SurfaceCornerParameterizationQuantity(std::string name, SurfaceMesh& mesh_, const std::vector<glm::vec2>& coords_,
+                                        ParamCoordsType type_, ParamVizStyle style);
 
-  virtual void buildHalfedgeInfoGUI(size_t heInd) override;
+  virtual void buildCornerInfoGUI(size_t cInd) override;
   virtual std::string niceName() override;
 
-  // === Members
-  std::vector<glm::vec2> coords; // on corners
-
 protected:
-  virtual void fillColorBuffers(gl::GLProgram& p) override;
+  virtual void fillCoordBuffers(render::ShaderProgram& p) override;
 };
 
 
@@ -83,17 +63,15 @@ protected:
 
 class SurfaceVertexParameterizationQuantity : public SurfaceParameterizationQuantity {
 public:
-  SurfaceVertexParameterizationQuantity(std::string name, std::vector<glm::vec2> values_, ParamCoordsType type_,
-                                        SurfaceMesh& mesh_);
+  SurfaceVertexParameterizationQuantity(std::string name, SurfaceMesh& mesh_, const std::vector<glm::vec2>& coords_,
+                                        ParamCoordsType type_, ParamVizStyle style);
 
   virtual void buildVertexInfoGUI(size_t vInd) override;
   virtual std::string niceName() override;
 
-  // === Members
-  std::vector<glm::vec2> coords; // on vertices
 
 protected:
-  virtual void fillColorBuffers(gl::GLProgram& p) override;
+  virtual void fillCoordBuffers(render::ShaderProgram& p) override;
 };
 
 } // namespace polyscope

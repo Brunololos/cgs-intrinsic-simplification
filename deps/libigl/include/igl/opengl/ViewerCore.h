@@ -27,6 +27,7 @@ class ViewerData;
 class ViewerCore
 {
 public:
+  using GLuint = MeshGL::GLuint;
   IGL_INLINE ViewerCore();
 
   // Initialization
@@ -72,7 +73,29 @@ public:
   // Draw everything
   //
   // data cannot be const because it is being set to "clean"
+  //
+  // Inputs:
+  //   data  which ViewerData to draw
+  //   update_matrices  whether to update view, proj, and norm matrices in
+  //     shaders
   IGL_INLINE void draw(ViewerData& data, bool update_matrices = true);
+  IGL_INLINE void initialize_shadow_pass();
+  IGL_INLINE void deinitialize_shadow_pass();
+  IGL_INLINE void draw_shadow_pass(ViewerData& data, bool update_matrices = true);
+  // Render given ViewerData to a buffer. The width and height are determined by
+  // non-zeros dimensions of R (and G,B,A should match) or – if both are zero —
+  // are set to this core's viewport sizes.
+  //
+  // Inputs:
+  //   data  which ViewerData to draw
+  //   update_matrices  whether to update view, proj, and norm matrices in
+  //     shaders
+  // Outputs:
+  //   R  width by height red pixel color values
+  //   G  width by height green pixel color values
+  //   B  width by height blue pixel color values
+  //   A  width by height alpha pixel color values
+  //
   IGL_INLINE void draw_buffer(
     ViewerData& data,
     bool update_matrices,
@@ -80,6 +103,10 @@ public:
     Eigen::Matrix<unsigned char,Eigen::Dynamic,Eigen::Dynamic>& G,
     Eigen::Matrix<unsigned char,Eigen::Dynamic,Eigen::Dynamic>& B,
     Eigen::Matrix<unsigned char,Eigen::Dynamic,Eigen::Dynamic>& A);
+  IGL_INLINE void draw_labels(
+    ViewerData& data,
+    const igl::opengl::MeshGL::TextGL& labels
+  );
 
   // Trackball angle (quaternion)
   enum RotationType
@@ -105,6 +132,10 @@ public:
   // Check whether a ViewerData visualization option is set for this viewport
   IGL_INLINE bool is_set(unsigned int property_mask) const;
 
+  // ------------------- Function
+  IGL_INLINE void delete_shadow_buffers();
+  IGL_INLINE void generate_shadow_buffers();
+
   // ------------------- Properties
 
   // Unique identifier
@@ -115,6 +146,12 @@ public:
 
   // Lighting
   Eigen::Vector3f light_position;
+  bool is_directional_light;
+  bool is_shadow_mapping;
+  GLuint shadow_width, shadow_height;
+  GLuint shadow_depth_tex;
+  GLuint shadow_depth_fbo;
+  GLuint shadow_color_rbo;
   float lighting_factor;
 
   RotationType rotation_type;
@@ -149,6 +186,8 @@ public:
   Eigen::Matrix4f view;
   Eigen::Matrix4f proj;
   Eigen::Matrix4f norm;
+  Eigen::Matrix4f shadow_view;
+  Eigen::Matrix4f shadow_proj;
   public:
       EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };

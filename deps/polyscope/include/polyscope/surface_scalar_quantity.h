@@ -1,42 +1,34 @@
-// Copyright 2017-2019, Nicholas Sharp and the Polyscope contributors. http://polyscope.run.
+// Copyright 2017-2023, Nicholas Sharp and the Polyscope contributors. https://polyscope.run
+
 #pragma once
 
+#include "polyscope/polyscope.h"
+
 #include "polyscope/affine_remapper.h"
-#include "polyscope/gl/color_maps.h"
 #include "polyscope/histogram.h"
+#include "polyscope/render/color_maps.h"
+#include "polyscope/render/engine.h"
+#include "polyscope/scalar_quantity.h"
 #include "polyscope/surface_mesh.h"
 
 namespace polyscope {
 
-class SurfaceScalarQuantity : public SurfaceMeshQuantity {
+class SurfaceScalarQuantity : public SurfaceMeshQuantity, public ScalarQuantity<SurfaceScalarQuantity> {
 public:
-  SurfaceScalarQuantity(std::string name, SurfaceMesh& mesh_, std::string definedOn, DataType dataType);
+  SurfaceScalarQuantity(std::string name, SurfaceMesh& mesh_, std::string definedOn, const std::vector<double>& values_,
+                        DataType dataType);
 
   virtual void draw() override;
   virtual void buildCustomUI() override;
   virtual std::string niceName() override;
-  virtual void geometryChanged() override;
-
-  virtual void writeToFile(std::string filename = "");
-
-  // === Members
-  const DataType dataType;
+  virtual void refresh() override;
 
 protected:
-  // Affine data maps and limits
-  void resetVizRange();
-  float vizRangeLow, vizRangeHigh;
-  float dataRangeHigh, dataRangeLow;
-  Histogram hist;
-
-  // UI internals
-  gl::ColorMapID cMap;
   const std::string definedOn;
-  std::unique_ptr<gl::GLProgram> program;
+  std::shared_ptr<render::ShaderProgram> program;
 
   // Helpers
   virtual void createProgram() = 0;
-  void setProgramUniforms(gl::GLProgram& program);
 };
 
 // ========================================================
@@ -45,18 +37,12 @@ protected:
 
 class SurfaceVertexScalarQuantity : public SurfaceScalarQuantity {
 public:
-  SurfaceVertexScalarQuantity(std::string name, std::vector<double> values_, SurfaceMesh& mesh_,
+  SurfaceVertexScalarQuantity(std::string name, const std::vector<double>& values_, SurfaceMesh& mesh_,
                               DataType dataType_ = DataType::STANDARD);
 
   virtual void createProgram() override;
 
-  void fillColorBuffers(gl::GLProgram& p);
-
   void buildVertexInfoGUI(size_t vInd) override;
-  virtual void writeToFile(std::string filename = "") override;
-
-  // === Members
-  std::vector<double> values;
 };
 
 
@@ -66,17 +52,12 @@ public:
 
 class SurfaceFaceScalarQuantity : public SurfaceScalarQuantity {
 public:
-  SurfaceFaceScalarQuantity(std::string name, std::vector<double> values_, SurfaceMesh& mesh_,
+  SurfaceFaceScalarQuantity(std::string name, const std::vector<double>& values_, SurfaceMesh& mesh_,
                             DataType dataType_ = DataType::STANDARD);
 
   virtual void createProgram() override;
 
-  void fillColorBuffers(gl::GLProgram& p);
-
   void buildFaceInfoGUI(size_t fInd) override;
-
-  // === Members
-  std::vector<double> values;
 };
 
 
@@ -86,19 +67,12 @@ public:
 
 class SurfaceEdgeScalarQuantity : public SurfaceScalarQuantity {
 public:
-  SurfaceEdgeScalarQuantity(std::string name, std::vector<double> values_, SurfaceMesh& mesh_,
+  SurfaceEdgeScalarQuantity(std::string name, const std::vector<double>& values_, SurfaceMesh& mesh_,
                             DataType dataType_ = DataType::STANDARD);
-  //   ~SurfaceVertexScalarQuantity();
 
   virtual void createProgram() override;
 
-  void fillColorBuffers(gl::GLProgram& p);
-
   void buildEdgeInfoGUI(size_t edgeInd) override;
-
-
-  // === Members
-  std::vector<double> values;
 };
 
 // ========================================================
@@ -107,18 +81,26 @@ public:
 
 class SurfaceHalfedgeScalarQuantity : public SurfaceScalarQuantity {
 public:
-  SurfaceHalfedgeScalarQuantity(std::string name, std::vector<double> values_, SurfaceMesh& mesh_,
+  SurfaceHalfedgeScalarQuantity(std::string name, const std::vector<double>& values_, SurfaceMesh& mesh_,
                                 DataType dataType_ = DataType::STANDARD);
-  //   ~SurfaceVertexScalarQuantity();
 
   virtual void createProgram() override;
 
-  void fillColorBuffers(gl::GLProgram& p);
-
   void buildHalfedgeInfoGUI(size_t heInd) override;
+};
 
-  // === Members
-  std::vector<double> values;
+// ========================================================
+// ==========          Corner Scalar           ==========
+// ========================================================
+
+class SurfaceCornerScalarQuantity : public SurfaceScalarQuantity {
+public:
+  SurfaceCornerScalarQuantity(std::string name, const std::vector<double>& values_, SurfaceMesh& mesh_,
+                              DataType dataType_ = DataType::STANDARD);
+
+  virtual void createProgram() override;
+
+  void buildCornerInfoGUI(size_t heInd) override;
 };
 
 

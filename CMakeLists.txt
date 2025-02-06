@@ -61,15 +61,30 @@ else()
 endif()
 
 # # Find Eigen
-add_subdirectory("deps/eigen-3.4.0")
-find_package(Eigen3 3.4 REQUIRED NO_MODULE)
+# add_subdirectory("deps/eigen")
+# find_package(Eigen3 3.4.90 REQUIRED NO_MODULE)
+
+include(FetchContent)
+set(EIGEN_VERSION 3.3)
+find_package(Eigen3 ${EIGEN_VERSION} QUIET)
+if(NOT EIGEN3_FOUND)
+  set(BUILD_TESTING OFF CACHE INTERNAL "")
+  FetchContent_Declare(
+    eigen
+    GIT_REPOSITORY  https://gitlab.com/libeigen/eigen.git
+    GIT_TAG         ${EIGEN_VERSION}
+    GIT_SHALLOW     ON
+  )
+  FetchContent_MakeAvailable(eigen)
+  unset(BUILD_TESTING CACHE)
+endif()
+
 add_subdirectory("geometry-central")
 
 # Add polyscope
 message("\n\n == CMAKE recursively building Polyscope\n")
 add_subdirectory("deps/polyscope")
 
-include(FetchContent)
 FetchContent_Declare(
   tinyad
   GIT_REPOSITORY https://github.com/patr-schm/tinyad.git
@@ -91,7 +106,6 @@ endif()
 # (and see the libIGL build documentation)
 message("\n\n == CMAKE recursively building libIGL\n")
 set(LIBIGL_WITH_EMBREE            OFF CACHE BOOL "Use Embree")
-set(LIBIGL_WITH_OPENGL            OFF CACHE BOOL "Use OpenGL")
 set(LIBIGL_WITH_OPENGL            OFF CACHE BOOL "Use OpenGL")
 set(LIBIGL_WITH_OPENGL_GLFW       OFF CACHE BOOL "Use GLFW"  )
 set(LIBIGL_WITH_OPENGL_GLFW_IMGUI OFF CACHE BOOL "Use ImGui" )

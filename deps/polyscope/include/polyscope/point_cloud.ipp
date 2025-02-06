@@ -1,4 +1,5 @@
-// Copyright 2017-2019, Nicholas Sharp and the Polyscope contributors. http://polyscope.run.
+// Copyright 2017-2023, Nicholas Sharp and the Polyscope contributors. https://polyscope.run
+
 #pragma once
 
 namespace polyscope {
@@ -6,7 +7,9 @@ namespace polyscope {
 
 // Shorthand to add a point cloud to polyscope
 template <class T>
-PointCloud* registerPointCloud(std::string name, const T& points, bool replaceIfPresent) {
+PointCloud* registerPointCloud(std::string name, const T& points) {
+  checkInitialized();
+
   PointCloud* s = new PointCloud(name, standardizeVectorArray<glm::vec3, 3>(points));
   bool success = registerStructure(s);
   if (!success) {
@@ -15,7 +18,9 @@ PointCloud* registerPointCloud(std::string name, const T& points, bool replaceIf
   return s;
 }
 template <class T>
-PointCloud* registerPointCloud2D(std::string name, const T& points, bool replaceIfPresent) {
+PointCloud* registerPointCloud2D(std::string name, const T& points) {
+  checkInitialized();
+
   std::vector<glm::vec3> points3D(standardizeVectorArray<glm::vec3, 2>(points));
   for (auto& v : points3D) {
     v.z = 0.;
@@ -30,18 +35,14 @@ PointCloud* registerPointCloud2D(std::string name, const T& points, bool replace
 
 template <class V>
 void PointCloud::updatePointPositions(const V& newPositions) {
-  points = standardizeVectorArray<glm::vec3, 3>(newPositions);
-
-  program.reset();
-  pickProgram.reset();
-
-  for (auto& q : quantities) {
-    q.second->geometryChanged();
-  }
+  validateSize(newPositions, nPoints(), "point cloud updated positions " + name);
+  points.data = standardizeVectorArray<glm::vec3, 3>(newPositions);
+  points.markHostBufferUpdated();
 }
 
 template <class V>
 void PointCloud::updatePointPositions2D(const V& newPositions2D) {
+  validateSize(newPositions2D, nPoints(), "point cloud updated positions " + name);
   std::vector<glm::vec3> positions3D = standardizeVectorArray<glm::vec3, 2>(newPositions2D);
   for (glm::vec3& v : positions3D) {
     v.z = 0.;
@@ -56,6 +57,10 @@ void PointCloud::updatePointPositions2D(const V& newPositions2D) {
 inline PointCloud* getPointCloud(std::string name) {
   return dynamic_cast<PointCloud*>(getStructure(PointCloud::structureTypeName, name));
 }
+inline bool hasPointCloud(std::string name) { return hasStructure(PointCloud::structureTypeName, name); }
+inline void removePointCloud(std::string name, bool errorIfAbsent) {
+  removeStructure(PointCloud::structureTypeName, name, errorIfAbsent);
+}
 
 
 // =====================================================
@@ -69,11 +74,25 @@ PointCloudColorQuantity* PointCloud::addColorQuantity(std::string name, const T&
   return addColorQuantityImpl(name, standardizeVectorArray<glm::vec3, 3>(colors));
 }
 
-
 template <class T>
 PointCloudScalarQuantity* PointCloud::addScalarQuantity(std::string name, const T& data, DataType type) {
   validateSize(data, nPoints(), "point cloud scalar quantity " + name);
   return addScalarQuantityImpl(name, standardizeArray<double, T>(data), type);
+}
+
+
+template <class T>
+PointCloudParameterizationQuantity* PointCloud::addParameterizationQuantity(std::string name, const T& param,
+                                                                            ParamCoordsType type) {
+  validateSize(param, nPoints(), "point cloud parameterization quantity " + name);
+  return addParameterizationQuantityImpl(name, standardizeVectorArray<glm::vec2, 2>(param), type);
+}
+
+template <class T>
+PointCloudParameterizationQuantity* PointCloud::addLocalParameterizationQuantity(std::string name, const T& param,
+                                                                                 ParamCoordsType type) {
+  validateSize(param, nPoints(), "point cloud parameterization quantity " + name);
+  return addLocalParameterizationQuantityImpl(name, standardizeVectorArray<glm::vec2, 2>(param), type);
 }
 
 template <class T>

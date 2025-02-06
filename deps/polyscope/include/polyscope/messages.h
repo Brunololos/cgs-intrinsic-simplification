@@ -1,4 +1,5 @@
-// Copyright 2017-2019, Nicholas Sharp and the Polyscope contributors. http://polyscope.run.
+// Copyright 2017-2023, Nicholas Sharp and the Polyscope contributors. https://polyscope.run
+
 #pragma once
 
 #include <string>
@@ -20,6 +21,9 @@ void error(std::string message);
 // Errors which are so bad we won't even try to recover from them. Displays to the user before exiting the program.
 // Internally used for uncaught exceptions.
 void terminatingError(std::string message);
+
+// Wrapper used by polyscope to throw exceptions
+void exception(std::string message);
 
 // Process any warnings that have accumulated, showing them to the user and clearing the queue.
 void showDelayedWarnings();

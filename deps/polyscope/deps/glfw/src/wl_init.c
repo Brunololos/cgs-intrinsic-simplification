@@ -23,6 +23,10 @@
 //    distribution.
 //
 //========================================================================
+// It is fine to use C99 in this file because it will not be built with VS
+//========================================================================
+
+#define _POSIX_C_SOURCE 200809L
 
 #include "internal.h"
 
@@ -100,6 +104,7 @@ static void pointerHandleEnter(void* data,
 
     window->wl.decorations.focus = focus;
     _glfw.wl.serial = serial;
+    _glfw.wl.pointerEnterSerial = serial;
     _glfw.wl.pointerFocus = window;
 
     window->wl.hovered = GLFW_TRUE;
@@ -123,6 +128,7 @@ static void pointerHandleLeave(void* data,
     _glfw.wl.serial = serial;
     _glfw.wl.pointerFocus = NULL;
     _glfwInputCursorEnter(window, GLFW_FALSE);
+    _glfw.wl.cursorPreviousName = NULL;
 }
 
 static void setCursor(_GLFWwindow* window, const char* name)
@@ -158,7 +164,7 @@ static void setCursor(_GLFWwindow* window, const char* name)
     buffer = wl_cursor_image_get_buffer(image);
     if (!buffer)
         return;
-    wl_pointer_set_cursor(_glfw.wl.pointer, _glfw.wl.serial,
+    wl_pointer_set_cursor(_glfw.wl.pointer, _glfw.wl.pointerEnterSerial,
                           surface,
                           image->hotspot_x / scale,
                           image->hotspot_y / scale);
@@ -167,6 +173,7 @@ static void setCursor(_GLFWwindow* window, const char* name)
     wl_surface_damage(surface, 0, 0,
                       image->width, image->height);
     wl_surface_commit(surface);
+    _glfw.wl.cursorPreviousName = name;
 }
 
 static void pointerHandleMotion(void* data,
@@ -176,48 +183,47 @@ static void pointerHandleMotion(void* data,
                                 wl_fixed_t sy)
 {
     _GLFWwindow* window = _glfw.wl.pointerFocus;
-    const char* cursorName;
+    const char* cursorName = NULL;
+    double x, y;
 
     if (!window)
         return;
 
     if (window->cursorMode == GLFW_CURSOR_DISABLED)
         return;
-    else
-    {
-        window->wl.cursorPosX = wl_fixed_to_double(sx);
-        window->wl.cursorPosY = wl_fixed_to_double(sy);
-    }
+    x = wl_fixed_to_double(sx);
+    y = wl_fixed_to_double(sy);
 
     switch (window->wl.decorations.focus)
     {
         case mainWindow:
-            _glfwInputCursorPos(window,
-                                wl_fixed_to_double(sx),
-                                wl_fixed_to_double(sy));
+            window->wl.cursorPosX = x;
+            window->wl.cursorPosY = y;
+            _glfwInputCursorPos(window, x, y);
+            _glfw.wl.cursorPreviousName = NULL;
             return;
         case topDecoration:
-            if (window->wl.cursorPosY < _GLFW_DECORATION_WIDTH)
+            if (y < _GLFW_DECORATION_WIDTH)
                 cursorName = "n-resize";
             else
                 cursorName = "left_ptr";
             break;
         case leftDecoration:
-            if (window->wl.cursorPosY < _GLFW_DECORATION_WIDTH)
+            if (y < _GLFW_DECORATION_WIDTH)
                 cursorName = "nw-resize";
             else
                 cursorName = "w-resize";
             break;
         case rightDecoration:
-            if (window->wl.cursorPosY < _GLFW_DECORATION_WIDTH)
+            if (y < _GLFW_DECORATION_WIDTH)
                 cursorName = "ne-resize";
             else
                 cursorName = "e-resize";
             break;
         case bottomDecoration:
-            if (window->wl.cursorPosX < _GLFW_DECORATION_WIDTH)
+            if (x < _GLFW_DECORATION_WIDTH)
                 cursorName = "sw-resize";
-            else if (window->wl.cursorPosX > window->wl.width + _GLFW_DECORATION_WIDTH)
+            else if (x > window->wl.width + _GLFW_DECORATION_WIDTH)
                 cursorName = "se-resize";
             else
                 cursorName = "s-resize";
@@ -225,7 +231,8 @@ static void pointerHandleMotion(void* data,
         default:
             assert(0);
     }
-    setCursor(window, cursorName);
+    if (_glfw.wl.cursorPreviousName != cursorName)
+        setCursor(window, cursorName);
 }
 
 static void pointerHandleButton(void* data,
@@ -343,9 +350,9 @@ static void pointerHandleAxis(void* data,
            axis == WL_POINTER_AXIS_VERTICAL_SCROLL);
 
     if (axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL)
-        x = wl_fixed_to_double(value) * scrollFactor;
+        x = -wl_fixed_to_double(value) * scrollFactor;
     else if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL)
-        y = wl_fixed_to_double(value) * scrollFactor;
+        y = -wl_fixed_to_double(value) * scrollFactor;
 
     _glfwInputScroll(window, x, y);
 }
@@ -554,7 +561,7 @@ static GLFWbool inputChar(_GLFWwindow* window, uint32_t key)
         }
     }
 
-    return xkb_keymap_key_repeats(_glfw.wl.xkb.keymap, syms[0]);
+    return xkb_keymap_key_repeats(_glfw.wl.xkb.keymap, code);
 }
 
 static void keyboardHandleKey(void* data,

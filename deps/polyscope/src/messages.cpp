@@ -1,14 +1,11 @@
-// Copyright 2017-2019, Nicholas Sharp and the Polyscope contributors. http://polyscope.run.
+// Copyright 2017-2023, Nicholas Sharp and the Polyscope contributors. https://polyscope.run
+
 #include "polyscope/messages.h"
 
 #include "imgui.h"
 #include "polyscope/polyscope.h"
 
 #include <deque>
-
-using std::cout;
-using std::endl;
-using std::string;
 
 namespace polyscope {
 
@@ -95,7 +92,7 @@ void buildWarningUI(std::string warningBaseString, std::string warningDetailStri
   ImGui::OpenPopup("WARNING");
 
 
-  string warningRepeatString = "";
+  std::string warningRepeatString = "";
   if (nRepeats > 0) {
     warningRepeatString = "(and " + std::to_string(nRepeats) + " similar warnings)";
   }
@@ -202,27 +199,44 @@ void buildWarningUI(std::string warningBaseString, std::string warningDetailStri
 } // namespace
 
 
-void info(std::string message) { cout << options::printPrefix << message << endl; }
+void info(std::string message) {
+  if (options::verbosity > 0) {
+    std::cout << options::printPrefix << message << std::endl;
+  }
+}
 
 void error(std::string message) {
-  std::cout << options::printPrefix << "[ERROR] " << message << std::endl;
-
-  auto func = std::bind(buildErrorUI, message, false);
-  pushContext(func);
+  if (options::verbosity > 0) {
+    std::cout << options::printPrefix << "[ERROR] " << message << std::endl;
+  }
 
   if (options::errorsThrowExceptions) {
     throw std::logic_error(options::printPrefix + message);
   }
 }
 
+void exception(std::string message) {
+
+  message = options::printPrefix + " [EXCEPTION] " + message;
+
+  if (options::verbosity > 0) {
+    std::cout << message << std::endl;
+  }
+
+  throw std::runtime_error(message);
+}
+
 void terminatingError(std::string message) {
-  std::cout << options::printPrefix << "[ERROR] " << message << std::endl;
+  if (options::verbosity > 0) {
+    std::cout << options::printPrefix << "[ERROR] " << message << std::endl;
+  }
 
   auto func = std::bind(buildErrorUI, message, true);
-  pushContext(func);
+  pushContext(func, false);
 
   // Quit the program
-  shutdown(-1);
+  shutdown();
+  std::exit(-1);
 }
 
 void warning(std::string baseMessage, std::string detailMessage) {
@@ -252,16 +266,15 @@ void showDelayedWarnings() {
     showingWarning = true;
     WarningMessage& currMessage = warningMessages.front();
 
-    std::cout << options::printPrefix << "[WARNING] " << currMessage.baseMessage << " --- "
-              << currMessage.detailMessage;
-    if (currMessage.repeatCount > 0) {
-      std::cout << " (and " << currMessage.repeatCount << " similar messages)." << std ::endl;
-    } else {
+    if (options::verbosity > 0) {
+      std::cout << options::printPrefix << "[WARNING] " << currMessage.baseMessage;
+      if (currMessage.detailMessage != "") std::cout << " --- " << currMessage.detailMessage;
+      if (currMessage.repeatCount > 0) std::cout << " (and " << currMessage.repeatCount << " similar messages).";
       std::cout << std ::endl;
     }
 
     auto func = std::bind(buildWarningUI, currMessage.baseMessage, currMessage.detailMessage, currMessage.repeatCount);
-    pushContext(func);
+    pushContext(func, false);
 
     warningMessages.pop_front();
     showingWarning = false;

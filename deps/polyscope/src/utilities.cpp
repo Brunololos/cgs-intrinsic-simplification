@@ -1,8 +1,14 @@
-// Copyright 2017-2019, Nicholas Sharp and the Polyscope contributors. http://polyscope.run.
+// Copyright 2017-2023, Nicholas Sharp and the Polyscope contributors. https://polyscope.run
+
 #include "polyscope/utilities.h"
+
 
 #include <cmath>
 #include <vector>
+
+#include "imgui.h"
+
+#include "polyscope/messages.h"
 
 
 namespace polyscope {
@@ -36,18 +42,39 @@ std::string guessNiceNameFromPath(std::string fullname) {
   return niceName;
 }
 
-std::string prettyPrintCount(size_t count) {
+void validateName(const std::string& name) {
+  if (name == "") exception("name must not be the empty string");
+  if (name.find("#") != std::string::npos) exception("name must not contain '#' characters");
+}
 
-  /*
-  // Pretty print test
-  size_t num = 0;
-  size_t mult = 1;
-  for(int i = 0; i < 18; i++) {
-    cout << num <<  " --> |" << polyscope::utilities::prettyPrintCount(num) << "|" <<  endl;
-    mult *= 10;
-    num += mult * randomInt(0,9);
+std::tuple<std::string, std::string> splitExt(std::string f) {
+  auto p = f.find_last_of(".");
+  return std::tuple<std::string, std::string>{f.substr(0, p), f.substr(p, std::string::npos)};
+}
+
+void splitTransform(const glm::mat4& trans, glm::mat3x4& R, glm::vec3& T) {
+  for (int i = 0; i < 3; i++) {
+    for (int j = 0; j < 4; j++) {
+      R[i][j] = trans[i][j];
+    }
+    T[i] = trans[3][i];
   }
-  */
+}
+
+glm::mat4 buildTransform(const glm::mat3x4& R, const glm::vec3& T) {
+  glm::mat4 trans(1.0);
+  for (int i = 0; i < 3; i++) {
+    for (int j = 0; j < 4; j++) {
+      trans[i][j] = R[i][j];
+    }
+    trans[3][i] = T[i];
+  }
+
+  return trans;
+}
+
+
+std::string prettyPrintCount(size_t count) {
 
   int nDigits = 1;
   if (count > 0) {
@@ -91,6 +118,17 @@ std::string prettyPrintCount(size_t count) {
   } else /*(nDigits == 3) */ {
     snprintf(buf, 50, "%2.0f%s", countD, postfix.c_str());
     return std::string(buf);
+  }
+}
+
+void ImGuiHelperMarker(const char* text) {
+  ImGui::TextDisabled("(?)");
+  if (ImGui::IsItemHovered()) {
+    ImGui::BeginTooltip();
+    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+    ImGui::TextUnformatted(text);
+    ImGui::PopTextWrapPos();
+    ImGui::EndTooltip();
   }
 }
 
