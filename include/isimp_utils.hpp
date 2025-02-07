@@ -10,6 +10,7 @@
 #include "isimp_data.hpp"
 // register a point to be tracked through the simplification
 void register_point(iSimpData& iSData, const BarycentricPoint point, const TexCoord texcoord, const int face_idx);
+void map_registered(iSimpData& iSData, const int n_vertices);
 void map_registered(iSimpData& iSData);
 // TODO: implement simplification operations
 // returns whether the edge flip could be performed/was successful

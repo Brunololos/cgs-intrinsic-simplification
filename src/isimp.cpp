@@ -159,24 +159,24 @@ void iSimp_step(iSimpData& data)
   if(std::isinf(ice)) { std::cout << "Converged!" << std::endl; data.hasConverged = true; return; }
   if (data.intrinsicMesh->vertex(vertex_idx).isDead()) { return; }
   // if (data.intrinsicMesh->vertex(r).isBoundary()) { return true; }
-  std::cout << "\n\n\nflatten vertex: " << vertex_idx << std::endl;
+  // std::cout << "\n\n\nflatten vertex: " << vertex_idx << std::endl;
   could_flatten = flatten_vertex(data, vertex_idx);
   if(could_flatten)
   {
-    std::cout << "\n\n\nflip vertex: " << vertex_idx << " to degree 3: " << std::endl;
+    // std::cout << "\n\n\nflip vertex: " << vertex_idx << " to degree 3: " << std::endl;
     could_flip_to_deg3 = flip_vertex_to_deg3(data, vertex_idx);
     if(could_flip_to_deg3)
     {
-      std::cout << "\n\n\nremove vertex: " << vertex_idx << std::endl;
+      // std::cout << "\n\n\nremove vertex: " << vertex_idx << std::endl;
       // save neighbors, because we cant iterate over vertex neighborhood after vertex removal
       temp_neighbors.clear();
-      std::cout << "cleared temp_neighbors: ";
-      for (gcs::Vertex neighbor : temp_neighbors) { std::cout << neighbor.getIndex() << ", "; }
-      std::cout << std::endl;
-      for (gcs::Vertex neighbor : data.intrinsicMesh->vertex(vertex_idx).adjacentVertices()) { std::cout << "inserting temp_neighbor: " << neighbor.getIndex() << std::endl; temp_neighbors.push_back(neighbor); }
+      // std::cout << "cleared temp_neighbors: ";
+      // for (gcs::Vertex neighbor : temp_neighbors) { std::cout << neighbor.getIndex() << ", "; }
+      // std::cout << std::endl;
+      for (gcs::Vertex neighbor : data.intrinsicMesh->vertex(vertex_idx).adjacentVertices()) { /* std::cout << "inserting temp_neighbor: " << neighbor.getIndex() << std::endl; */ temp_neighbors.push_back(neighbor); }
       could_remove = remove_vertex(data, vertex_idx);
-      if(could_remove) { std::cout << "Vertex Removal successful!" << std::endl; }
-      else { std::cout << "Vertex Removal failed!" << std::endl; }
+      // if(could_remove) { std::cout << "Vertex Removal successful!" << std::endl; }
+      // else { std::cout << "Vertex Removal failed!" << std::endl; }
       // try to enforce delaunay by iterating over all edges and flipping them, if necessary
       // NOTE: one could try to be smarter and only iterate over edges incident to the changed vertices/edges
       flip_to_delaunay(data);

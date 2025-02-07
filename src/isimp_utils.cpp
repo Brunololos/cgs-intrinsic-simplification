@@ -18,6 +18,21 @@ void map_registered(iSimpData& iSData)
     iSData.mapping[i]->map_to_coarse(iSData.mapped_points, iSData.mapped_by_triangle);
   }
 }
+
+void map_registered(iSimpData& iSData, const int n_vertices)
+{
+  iSData.mapped_points = iSData.tracked_points;
+  iSData.mapped_by_triangle = iSData.tracked_by_triangle;
+  int remove_n_vertices = iSData.inputMesh->nVertices() - n_vertices;
+
+  int removal_count = 0;
+  for(int i=0; i<iSData.mapping.size() && removal_count < remove_n_vertices; i++)
+  {
+    iSData.mapping[i]->map_to_coarse(iSData.mapped_points, iSData.mapped_by_triangle);
+    if (iSData.mapping[i]->op_type == SIMP_OP::V_REMOVAL) { removal_count++; }
+  }
+}
+
 // For an intrinsic edge to be (intrinsically) flippable two conditions have to hold:
 //   1. the edge adjacent triangles have to form a convex quad
 //   2. the edge endpoints have degree two or more

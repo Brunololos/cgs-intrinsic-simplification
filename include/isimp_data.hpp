@@ -233,6 +233,7 @@ class Vertex_Flattening : public Mapping_operation {
 
     Vertex_Flattening(const std::vector<int> F_idxs_, const std::vector<int> v_idxs_, const double v_u_)
     {
+      op_type = SIMP_OP::V_FLATTEN;
       F_idxs = F_idxs_;
       v_idxs = v_idxs_;
       v_u = v_u_;
