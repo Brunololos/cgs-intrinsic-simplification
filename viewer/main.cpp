@@ -43,6 +43,8 @@ int main(int argc, char *argv[])
 
   Eigen::MatrixXd V, UV, NV;
   Eigen::MatrixXi F, UF, NF;
+  // store all colorings for all different simplification states (for each vertex removal) (This is pretty inefficient.)
+  std::vector<Eigen::VectorXi> colorings;
   MatrixXuc R, G, B, A;
   int TEXTURE_WIDTH = 1000;
   int TEXTURE_HEIGHT = 1000;
@@ -63,6 +65,7 @@ int main(int argc, char *argv[])
   // }
   igl::readOBJ(argv[1], V, UV, NV, F, UF, NF);
   coarsen_to_n_vertices = V.rows();
+  colorings = std::vector<Eigen::VectorXi>();
 
   // modified vertices & faces
   Eigen::MatrixXd U = V;
@@ -248,14 +251,45 @@ int main(int argc, char *argv[])
     // //viewer.data().line_width = 2.0; // NOTE: SUPPOSEDLY NOT SUPPORTED ON MAC & WINDOWS
     // viewer.data().set_edges(P, E, CM.row(4));
   };
+  auto compute_coloring = [&]() {
+    // update coloring
+    int num_colors = CM.rows() - 1;
+    Eigen::VectorXi Coloring = Eigen::VectorXi::Zero(iSData.F.rows());
+    for (int i = 0; i < iSData.inputMesh->nFaces(); i++)
+    {
+      // Determine color
+      int color_idx = (i % (num_colors - 1)) + 1;
+      gcs::Face current_face = iSData.intrinsicMesh->face(i);
+      if (current_face.isDead()) { continue; }
+      int max_color_idx = 0;
+      for(gcs::Face neighbor : current_face.adjacentFaces())
+      {
+        int neighbor_idx = neighbor.getIndex();
+        // std::cout << "Checking neighbor face: " << neighbor_idx << std::endl;
+        int neighbor_color_idx = Coloring(neighbor_idx);
+        if (neighbor_color_idx > max_color_idx) { max_color_idx = neighbor_color_idx; }
+        if (color_idx == neighbor_color_idx)
+        {
+          color_idx = max_color_idx + 1;
+        }
+      }
+      if (color_idx >= num_colors) { color_idx = 0; }
+      Coloring(i) = color_idx;
+      // std::cout << "Setting coloring index: " << color_idx << std::endl;
+    }
+    colorings.push_back(Coloring);
+  };
+
 
   const auto &update_texture = [&]()
   {
     int num_triangles = iSData.mapped_by_triangle.size();
     int num_colors = CM.rows() - 1;
+    int n_removals = iSData.inputMesh->nVertices() - coarsen_to_n_vertices;
+
+    // draw texture
     for (int i = 0; i < num_triangles; i++)
     {
-      // Color = colors(i%10)
       for (int j = 0; j < iSData.mapped_by_triangle[i].size(); j++)
       {
         int original_idx = iSData.mapped_by_triangle[i][j];
@@ -265,9 +299,9 @@ int main(int argc, char *argv[])
         // R(texcoord[0], texcoord[1]) = CM((i % num_colors) + 1, 0) * 255;
         // G(texcoord[0], texcoord[1]) = CM((i % num_colors) + 1, 1) * 255;
         // B(texcoord[0], texcoord[1]) = CM((i % num_colors) + 1, 2) * 255;
-        polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 0] = CM((i % num_colors) + 1, 0) * 255;
-        polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 1] = CM((i % num_colors) + 1, 1) * 255;
-        polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 2] = CM((i % num_colors) + 1, 2) * 255;
+        polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 0] = CM(colorings[n_removals](i), 0) * 255;
+        polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 1] = CM(colorings[n_removals](i), 1) * 255;
+        polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 2] = CM(colorings[n_removals](i), 2) * 255;
         polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 3] = 255;
         // std::cout << "Setting texcoord: (" << texcoord[0] << ", " << texcoord[1] << "): R=" << CM(i%9, 0) << ", G=" << CM(i%9, 1) << ", B=" << CM(i%9, 2) << std::endl;
       }
@@ -362,6 +396,7 @@ int main(int argc, char *argv[])
   // std::cout << "write_success: " << igl::png::writePNG(R, G, B, A, "H:/GIT/cgs-intrinsic-simplification/textures/object_texture.png") << std::endl;
   // // end insertion
   init_viewer_data();
+  compute_coloring();
   update_texture();
   // viewer.core().is_animating = true;
   // viewer.core().background_color.head(3) = CM.row(0).head(3).cast<float>();
@@ -373,6 +408,7 @@ int main(int argc, char *argv[])
   {
     // make simplification step
     iSimp_step(iSData);
+    compute_coloring();
   }
   // refresh_coarse_mesh(); //TODO: update coarse mesh
   min_n_vertices = iSData.intrinsicMesh->nVertices();
