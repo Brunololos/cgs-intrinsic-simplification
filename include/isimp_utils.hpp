@@ -12,6 +12,11 @@
 void register_point(iSimpData& iSData, const BarycentricPoint point, const TexCoord texcoord, const int face_idx);
 void map_registered(iSimpData& iSData, const int n_vertices);
 void map_registered(iSimpData& iSData);
+// DANGER! These functions expects a specific matching state of iSData & mapping_idx to work properly.
+// void map_current_from(iSimpData& iSData, const int from_n_vertices);
+// void map_current_from_to(iSimpData& iSData, const int from_n_vertices, const int n_vertices);
+void map_current_from(iSimpData& iSData, const int from_mapping_idx);
+void map_current_from_to(iSimpData& iSData, const int from_mapping_idx, const int to_mapping_idx);
 // TODO: implement simplification operations
 // returns whether the edge flip could be performed/was successful
 bool is_edge_flippable(const iSimpData& iSData, const Quad2D& quad, const gcs::Edge edge);
@@ -42,5 +47,8 @@ double total_angle(const iSimpData& iSData, const gcs::Vertex& vertex);
 double gaussian_curvature(const iSimpData& iSData, const gcs::Vertex& vertex);
 double find_tangent_space_angle(const iSimpData& iSData, const gcs::Edge& edge, const gcs::Vertex& vertex);
 PolarVector2D parallel_transport(const iSimpData& iSData, PolarVector2D tangent_vector, const gcs::Vertex origin, const gcs::Vertex target);
+
+// TODO: this doesnt make any sense! Here we check for triangle inequality violations, but this is not expected to hold anyways in the intrinsic regime.
+bool validate_intrinsic_edge_lengths(const iSimpData& iSData);
 
 #endif

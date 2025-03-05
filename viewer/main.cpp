@@ -28,16 +28,18 @@ enum class ISIMP_MODE
 
 int main(int argc, char *argv[])
 {
-  // if (argc < 2)
-  // {
-  //   std::cout << "Please pass an input mesh as first argument" << std::endl;
-  //   exit(1);
-  // }
   std::string filename = "../../meshes/spot.obj";
   int coarsen_to_n_vertices;
   int min_n_vertices = 0;
   bool using_texture = true;
 
+  // int dot_pos = ((std::string) argv[1]).find_last_of('.');
+  int dot_pos = ((std::string) argv[1]).size() - 4;
+  if (argc > 1 && ((std::string) argv[1]).substr(dot_pos).compare(".obj"))
+  {
+    std::cout << "Please pass a .obj mesh as the first argument" << std::endl;
+    exit(-1);
+  }
   if (argc > 1) { filename = argv[1]; }
   // if (argc > 2) { coarsen_to_n_vertices = std::to_integer(string(argv[2])); }
 
@@ -45,27 +47,35 @@ int main(int argc, char *argv[])
   Eigen::MatrixXi F, UF, NF;
   // store all colorings for all different simplification states (for each vertex removal) (This is pretty inefficient.)
   std::vector<Eigen::VectorXi> colorings;
+  // points tracked by triangle for each simplification state (I did this just to make the polyscope slider movement smoother, but this takes a lot of storage.)
+  std::vector<std::vector<std::vector<int>>> mapped_by_triangles;
+  std::vector<std::vector<BarycentricPoint>> mapped_pointss;
+  std::vector<int> snapshot_mapping_indices;
+  std::vector<int> simp_step_mapping_indices;
   MatrixXuc R, G, B, A;
-  int TEXTURE_WIDTH = 1000;
-  int TEXTURE_HEIGHT = 1000;
+  int TEXTURE_WIDTH = 2000;
+  int TEXTURE_HEIGHT = 2000;
   std::vector<unsigned char> polyscope_texture = std::vector<unsigned char>();
   polyscope::SurfaceCornerParameterizationQuantity* q = nullptr;
   polyscope::SurfaceMesh* psCoarseMesh;
   polyscope::SurfaceMesh* psMesh;
 
-  // int dot_pos = ((std::string) argv[1]).find_last_of('.');
-  // std::cout << ((std::string) argv[1]).substr(dot_pos) << std::endl;
-  // if (((std::string) argv[1]).substr(dot_pos) == ".obj")
-  // {
-  //   igl::readOBJ(argv[1], V, F);
-  // }
-  // else
-  // {
-  //   igl::read_triangle_mesh(argv[1], V, F);
-  // }
-  igl::readOBJ(argv[1], V, UV, NV, F, UF, NF);
+  igl::readOBJ(filename, V, UV, NV, F, UF, NF);
+
+  if (UF.rows() <= 0)
+  {
+    std::cout << "Please pass a .obj mesh with texture coordinates included." << std::endl;
+    exit(-1);
+  }
+
   coarsen_to_n_vertices = V.rows();
   colorings = std::vector<Eigen::VectorXi>();
+  mapped_by_triangles = std::vector<std::vector<std::vector<int>>>();
+  mapped_pointss = std::vector<std::vector<BarycentricPoint>>();
+  snapshot_mapping_indices = std::vector<int>();
+  simp_step_mapping_indices = std::vector<int>();
+  int snapshot_interval = 50;
+  bool do_texture_update = false;
 
   // modified vertices & faces
   Eigen::MatrixXd U = V;
@@ -125,6 +135,21 @@ int main(int argc, char *argv[])
                         189.0 / 255.0, 122.0 / 255.0, 246.0 / 255.0 // 15 light purple
                         )
                            .finished();
+
+  Eigen::MatrixXd CM2 = (Eigen::MatrixXd(12, 3) <<
+    166.0 / 255.0, 206.0 / 255.0, 227.0 / 255.0,
+    31.0 / 255.0, 120.0 / 255.0, 180.0 / 255.0,
+    178.0 / 255.0, 223.0 / 255.0, 138.0 / 255.0,
+    51.0 / 255.0, 160.0 / 255.0, 44.0 / 255.0,
+    251.0 / 255.0, 154.0 / 255.0, 153.0 / 255.0,
+    227.0 / 255.0, 26.0 / 255.0, 28.0 / 255.0,
+    253.0 / 255.0, 191.0 / 255.0, 111.0 / 255.0,
+    255.0 / 255.0, 127.0 / 255.0, 0.0 / 255.0,
+    202.0 / 255.0, 178.0 / 255.0, 214.0 / 255.0,
+    106.0 / 255.0, 61.0 / 255.0, 154.0 / 255.0,
+    255.0 / 255.0, 255.0 / 255.0, 153.0 / 255.0,
+    177.0 / 255.0, 89.0 / 255.0, 40.0 / 255.0
+  ).finished();
 
   // coloring
   int numVorF = (true /* true: visualize over vertices, false: visualize over faces */) ? V.rows() : F.rows();
@@ -302,6 +327,9 @@ int main(int argc, char *argv[])
         polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 0] = CM(colorings[n_removals](i), 0) * 255;
         polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 1] = CM(colorings[n_removals](i), 1) * 255;
         polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 2] = CM(colorings[n_removals](i), 2) * 255;
+        // polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 0] = CM(i % num_colors, 0) * 255;
+        // polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 1] = CM(i % num_colors, 1) * 255;
+        // polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 2] = CM(i % num_colors, 2) * 255;
         polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 3] = 255;
         // std::cout << "Setting texcoord: (" << texcoord[0] << ", " << texcoord[1] << "): R=" << CM(i%9, 0) << ", G=" << CM(i%9, 1) << ", B=" << CM(i%9, 2) << std::endl;
       }
@@ -377,7 +405,51 @@ int main(int argc, char *argv[])
   auto callback = [&]() {
     if(ImGui::SliderInt("remaining vertices", &coarsen_to_n_vertices, min_n_vertices, iSData.inputMesh->nVertices()))
     {
-      map_registered(iSData, coarsen_to_n_vertices);
+      do_texture_update = true;
+    }
+    if (ImGui::Button("Remove Vertex"))
+    {
+        coarsen_to_n_vertices = std::max(std::min(coarsen_to_n_vertices - 1, (int) iSData.inputMesh->nVertices()), min_n_vertices);
+        do_texture_update = true;
+    }
+    if (ImGui::Button("Add Vertex"))
+    {
+        coarsen_to_n_vertices = std::max(std::min(coarsen_to_n_vertices + 1, (int) iSData.inputMesh->nVertices()), min_n_vertices);
+        do_texture_update = true;
+    }
+    if (do_texture_update)
+    {
+      do_texture_update = false;
+      int snapshot_idx = std::floor((iSData.inputMesh->nVertices() - coarsen_to_n_vertices) / snapshot_interval);
+      int coarsen_from_n_vertices = iSData.inputMesh->nVertices() - snapshot_idx * snapshot_interval;
+      // std::cout << "Coarsening from " << coarsen_from_n_vertices << std::endl;
+      // std::cout << "Loading snapshots with index: " << snapshot_idx << std::endl;
+      // std::cout << "mapped_by_triangles size: " << mapped_by_triangles.size() << std::endl;
+      // std::cout << "mapped_pointss size: " << mapped_pointss.size() << std::endl;
+      // TODO: commented snapshots
+      iSData.mapped_by_triangle = mapped_by_triangles.at(snapshot_idx);
+      iSData.mapped_points = mapped_pointss.at(snapshot_idx);
+      int snapshot_mapping_idx = snapshot_mapping_indices.at(snapshot_idx);
+      // std::cout << "Coarsening from: " << coarsen_from_n_vertices << " to " << coarsen_to_n_vertices << std::endl;
+      // map_current_from_to(iSData, coarsen_from_n_vertices, coarsen_to_n_vertices);
+      // if (snapshot_mapping_indices.size() > snapshot_idx + 1)
+      if (simp_step_mapping_indices.size() > iSData.inputMesh->nVertices() - coarsen_to_n_vertices + 1)
+      {
+        // int next_snapshot_mapping_idx = snapshot_mapping_indices.at(snapshot_idx + 1);
+        int target_removal_idx = iSData.inputMesh->nVertices() - coarsen_to_n_vertices;
+        int simp_step_mapping_idx = simp_step_mapping_indices.at(iSData.inputMesh->nVertices() - coarsen_to_n_vertices + 1);
+        map_current_from_to(iSData, snapshot_mapping_idx, simp_step_mapping_idx);
+        // std::cout << "Mapping from " << snapshot_mapping_idx << " to " << simp_step_mapping_idx << std::endl;
+        // std::cout << "target_removal_idx: " << target_removal_idx << std::endl;
+      } else {
+        map_current_from(iSData, snapshot_mapping_idx);
+        // std::cout << "Mapping from " << snapshot_mapping_idx << " to the end." << std::endl;
+      }
+      // std::cout << "Mapping size: " << iSData.mapping.size() << std::endl;
+      // std::cout << "Step mapping size: " << simp_step_mapping_indices.size() << std::endl;
+      // std::cout << "Last step mapping idx: " << simp_step_mapping_indices.at(simp_step_mapping_indices.size() - 1) << std::endl;
+      // map_registered(iSData, coarsen_to_n_vertices);
+      // std::cout << iSData.mapped_points.size() << std::endl;
       update_texture();
       if (q != nullptr) {
         q->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, polyscope_texture, polyscope::TextureFormat::RGBA8);
@@ -392,6 +464,10 @@ int main(int argc, char *argv[])
   query_texture_barycentrics(UV, UF, TEXTURE_WIDTH, TEXTURE_HEIGHT, iSData);
   // // THese are inserted:
   map_registered(iSData);
+  mapped_by_triangles.push_back(iSData.mapped_by_triangle);
+  mapped_pointss.push_back(iSData.mapped_points);
+  snapshot_mapping_indices.push_back(0);
+  simp_step_mapping_indices.push_back(0);
   // update_texture();
   // std::cout << "write_success: " << igl::png::writePNG(R, G, B, A, "H:/GIT/cgs-intrinsic-simplification/textures/object_texture.png") << std::endl;
   // // end insertion
@@ -403,17 +479,41 @@ int main(int argc, char *argv[])
   // // update_points()
   // viewer.launch();
 
+  std::cout << "\n\nBeginning Simplification..." << std::endl;
   // while (!iSData.hasConverged && iSData.intrinsicMesh->nVertices() > coarsen_to_n_vertices)
   while (!iSData.hasConverged)
   {
+    int step_mapping_idx = iSData.mapping.size();
     // make simplification step
-    iSimp_step(iSData);
+    bool success = iSimp_step(iSData);
+    // if case, because the iSimp step can fail & not introduce any new simplification operations
+    // if(iSData.mapping.size() > step_mapping_idx) { simp_step_mapping_indices.push_back(step_mapping_idx); }
+    if(success) { simp_step_mapping_indices.push_back(step_mapping_idx); }
+    // TODO: commented snapshots
+    // map_registered(iSData); // TODO: This should be done step-wise not remapping through the whole sequence
+    // // map_current_from(iSData, iSData.intrinsicMesh->nVertices() + 1);
+    // // std::cout << "Mapping from " << iSData.intrinsicMesh->nVertices() << std::endl;
+    if ((iSData.inputMesh->nVertices() - iSData.intrinsicMesh->nVertices()) % snapshot_interval == 0) {
+      map_current_from(iSData, snapshot_mapping_indices.at(snapshot_mapping_indices.size() - 1));
+      std::cout << "Took snapshot at " << iSData.inputMesh->nVertices() - iSData.intrinsicMesh->nVertices() << " removed vertices" << std::endl;
+      mapped_by_triangles.push_back(iSData.mapped_by_triangle);
+      mapped_pointss.push_back(iSData.mapped_points);
+      snapshot_mapping_indices.push_back(iSData.mapping.size());
+    } // inefficiently store all simplification mappings
     compute_coloring();
+    // TODO: remove after debugging
+    // bool are_edge_lengths_valid = validate_intrinsic_edge_lengths(iSData);
+    // if(!are_edge_lengths_valid) {
+    //   std::cout << RED << "Found invalid edge-lengths after step_mapping_idx: " << step_mapping_idx << RESET << std::endl;
+    //   iSData.hasConverged = true;
+    // }
   }
   // refresh_coarse_mesh(); //TODO: update coarse mesh
   min_n_vertices = iSData.intrinsicMesh->nVertices();
+  // min_n_vertices = 200; // TODO: remove this when done with visualizations
 
-  // map_registered(iSData, iSData.inputMesh->nVertices());
+  // coarsen_to_n_vertices = 5;
+  // map_registered(iSData, coarsen_to_n_vertices);
   // update_texture();
 
   polyscope::init();

@@ -41,6 +41,8 @@ void initMesh(const Eigen::Matrix<double, -1, 3>& V, const Eigen::Matrix<int, -1
     // }
     i++;
   }
+  bool result = validate_intrinsic_edge_lengths(data);
+  if (!result) { std::cout << "occurred in iSData initialization " << std::endl; }
 
   // init masses & error vectors
   for (gcs::Vertex v : data.intrinsicMesh->vertices())
@@ -74,7 +76,7 @@ void initMesh(const Eigen::Matrix<double, -1, 3>& V, const Eigen::Matrix<int, -1
   data.hasConverged = false;
 }
 
-void iSimp_step(iSimpData& data)
+bool iSimp_step(iSimpData& data)
 {
   std::vector<gcs::Vertex> temp_neighbors = std::vector<gcs::Vertex>();
   int vertex_idx;
@@ -150,14 +152,14 @@ void iSimp_step(iSimpData& data)
   //   i++;
   // }
 
-  if(data.Q.empty()) { data.hasConverged = true; return; }
+  if(data.Q.empty()) { data.hasConverged = true; return false; }
   std::pair<int, double>* current = data.Q.begin()->get();   // this is Q.top()
   data.Q.erase(data.Q.begin());                              // this is Q.pop()
   vertex_idx = current->first;
   ice = current->second;
 
-  if(std::isinf(ice)) { std::cout << "Converged!" << std::endl; data.hasConverged = true; return; }
-  if (data.intrinsicMesh->vertex(vertex_idx).isDead()) { return; }
+  if(std::isinf(ice)) { std::cout << "Converged!" << std::endl; data.hasConverged = true; return false; }
+  if (data.intrinsicMesh->vertex(vertex_idx).isDead()) { return false; }
   // if (data.intrinsicMesh->vertex(r).isBoundary()) { return true; }
   // std::cout << "\n\n\nflatten vertex: " << vertex_idx << std::endl;
   could_flatten = flatten_vertex(data, vertex_idx);
@@ -201,8 +203,10 @@ void iSimp_step(iSimpData& data)
       data.Q_elems[neighbor.getIndex()].second = ice;
       data.Q.insert(std::make_shared<std::pair<int, double>>(data.Q_elems[neighbor.getIndex()]));
     }
+    return true;
   } else {
     data.Q_elems[vertex_idx].second = INFINITY;
     data.Q.insert(std::make_shared<std::pair<int, double>>(data.Q_elems[vertex_idx]));
+    return false;
   }
 }

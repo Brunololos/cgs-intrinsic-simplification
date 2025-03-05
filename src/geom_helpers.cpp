@@ -63,6 +63,36 @@ Quad2D unfold(const double l_ij, const double l_ik, const double l_jk, const dou
 
 double flipped_edgelength(const Quad2D& trianglepair)
 {
+  // TODO: remove guards & checks
+  double l = (trianglepair.row(2) - trianglepair.row(3)).norm();
+  if (l <= 1e-6) { std::cout << dye("flipped_edgelength: calculated " + std::to_string(l) + " edge length!", RED) << std::endl; } // TODO: remove after testing
+  if (l != l) { std::cout << dye("flipped_edgelength: calculated " + std::to_string(l) + " edge length!", RED) << std::endl; } // TODO: remove after testing
+
+  Vector2D ik = trianglepair.row(2) - trianglepair.row(0);
+  Vector2D il = trianglepair.row(3) - trianglepair.row(0);
+
+  Vector2D jk = trianglepair.row(2) - trianglepair.row(1);
+  Vector2D jl = trianglepair.row(3) - trianglepair.row(1);
+
+  double l_ik = ik.norm();
+  double l_il = il.norm();
+
+  double l_jk = jk.norm();
+  double l_jl = jl.norm();
+
+  double eps = 1e-6;
+  if ((l > l_ik + l_il + eps)
+  ||  (l_ik > l + l_il + eps)
+  ||  (l_il > l_ik + l + eps)
+
+  ||  (l > l_jk + l_jl + eps)
+  ||  (l_jk > l + l_jl + eps)
+  ||  (l_jl > l_jk + l + eps))
+  {
+    // TODO: perform edge flips to try to mitigate it
+    std::cout << dye("flipped_edgelength: Violated triangle inequality", RED) << std::endl;
+    return false;
+  }
   return (trianglepair.row(2) - trianglepair.row(3)).norm();
 }
 
@@ -70,43 +100,69 @@ double flipped_edgelength(const Quad2D& trianglepair)
 bool is_convex(const Quad2D& trianglepair)
 {
   // calculate cycle around quad boundary
-  Vector2D ik = trianglepair.row(2) - trianglepair.row(0);
-  Vector2D kj = trianglepair.row(1) - trianglepair.row(2);
-  Vector2D jl = trianglepair.row(3) - trianglepair.row(1);
-  Vector2D li = trianglepair.row(0) - trianglepair.row(3);
-
   Vector2D ij = trianglepair.row(1) - trianglepair.row(0);
-  Vector2D kl = trianglepair.row(3) - trianglepair.row(2);
-  Vector2D ji = -ij;
-  Vector2D lk = -kl;
+  Vector2D ik = trianglepair.row(2) - trianglepair.row(0);
+  Vector2D il = trianglepair.row(3) - trianglepair.row(0);
 
-  double prev = 0.0;
-  double curr = 0.0;
-  for (int i=0; i<4; i++)
-  {
-    // if (i == 0) { curr = ik.cross(ij).sum(); }
-    // if (i == 1) { curr = kj.cross(kl).sum(); }
-    // if (i == 2) { curr = jl.cross(ji).sum(); }
-    // if (i == 3) { curr = li.cross(lk).sum(); }
+  Vector2D jk = trianglepair.row(2) - trianglepair.row(1);
+  Vector2D jl = trianglepair.row(3) - trianglepair.row(1);
 
-    if (i == 0) { curr = scalar_cross(ik, ij); }
-    if (i == 1) { curr = scalar_cross(kj, kl); }
-    if (i == 2) { curr = scalar_cross(jl, ji); }
-    if (i == 3) { curr = scalar_cross(li, lk); }
+  double l_ij = ij.norm();
+  double l_ik = ik.norm();
+  double l_il = il.norm();
 
-    if (curr != 0.0)
-    {
-      if (curr * prev < 0.0)
-      {
-        return false;
-      }
-      else
-      {
-        prev = curr;
-      }
-    }
-  }
+  double l_jk = jk.norm();
+  double l_jl = jl.norm();
+
+  double theta_ijk = angle_i_from_lengths(l_ij, l_ik, l_jk);
+  double theta_ijl = angle_i_from_lengths(l_ij, l_il, l_jl);
+
+  double theta_jki = angle_i_from_lengths(l_ij, l_jk, l_ik);
+  double theta_jli = angle_i_from_lengths(l_ij, l_jl, l_il);
+
+  return (theta_ijk + theta_ijl < M_PI) && (theta_jki + theta_jli < M_PI);
 }
+
+// bool is_convex(const Quad2D& trianglepair)
+// {
+//   // calculate cycle around quad boundary
+//   Vector2D ik = trianglepair.row(2) - trianglepair.row(0);
+//   Vector2D kj = trianglepair.row(1) - trianglepair.row(2);
+//   Vector2D jl = trianglepair.row(3) - trianglepair.row(1);
+//   Vector2D li = trianglepair.row(0) - trianglepair.row(3);
+// 
+//   Vector2D ij = trianglepair.row(1) - trianglepair.row(0);
+//   Vector2D kl = trianglepair.row(3) - trianglepair.row(2);
+//   Vector2D ji = -ij;
+//   Vector2D lk = -kl;
+// 
+//   double prev = 0.0;
+//   double curr = 0.0;
+//   for (int i=0; i<4; i++)
+//   {
+//     // if (i == 0) { curr = ik.cross(ij).sum(); }
+//     // if (i == 1) { curr = kj.cross(kl).sum(); }
+//     // if (i == 2) { curr = jl.cross(ji).sum(); }
+//     // if (i == 3) { curr = li.cross(lk).sum(); }
+// 
+//     if (i == 0) { curr = scalar_cross(ik, ij); }
+//     if (i == 1) { curr = scalar_cross(kj, kl); }
+//     if (i == 2) { curr = scalar_cross(jl, ji); }
+//     if (i == 3) { curr = scalar_cross(li, lk); }
+// 
+//     if (curr != 0.0)
+//     {
+//       if (curr * prev < 0.0)
+//       {
+//         return false;
+//       }
+//       else
+//       {
+//         prev = curr;
+//       }
+//     }
+//   }
+// }
 
 // Point in triangle check logic adopted from: https://stackoverflow.com/questions/2049582/how-to-determine-if-a-point-is-in-a-2d-triangle
 double sign_helper(const double px, const double py, const Point2D p1, const Point2D p2)

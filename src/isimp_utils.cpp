@@ -33,6 +33,59 @@ void map_registered(iSimpData& iSData, const int n_vertices)
   }
 }
 
+// WATCH OUT! mapped_points & mapped_by_data are assumed to be initialized correctly.
+// And the mapping index has to be chosen correctly as well.
+// Use responsibly!
+// void map_current_from(iSimpData& iSData, const int from_n_vertices)
+// {
+//   int initial_vertex_count = iSData.inputMesh->nVertices();
+//   int current_vertex_count = from_n_vertices;
+// 
+//   bool found_start = false;
+//   int removal_count = 0;
+//   for(int i=0; i<iSData.mapping.size(); i++)
+//   {
+//     if (iSData.mapping[i]->op_type == SIMP_OP::V_REMOVAL) { removal_count++; }
+//     if (removal_count == initial_vertex_count - current_vertex_count) { found_start = true; continue; }
+//     if (!found_start) { continue; }
+//     iSData.mapping[i]->map_to_coarse(iSData.mapped_points, iSData.mapped_by_triangle);
+//   }
+// }
+void map_current_from(iSimpData& iSData, const int from_mapping_idx)
+{
+  for(int i=from_mapping_idx; i<iSData.mapping.size(); i++)
+  {
+    iSData.mapping[i]->map_to_coarse(iSData.mapped_points, iSData.mapped_by_triangle);
+  }
+}
+
+// WATCH OUT! mapped_points & mapped_by_data are assumed to be initialized correctly.
+// And the mapping index has to be chosen correctly as well.
+// Use responsibly!
+// void map_current_from_to(iSimpData& iSData, const int from_n_vertices, const int n_vertices)
+// {
+//   int initial_vertex_count = iSData.inputMesh->nVertices();
+//   int remove_n_vertices = initial_vertex_count - n_vertices;
+// 
+//   bool found_start = false;
+//   int removal_count = 0;
+//   for(int i=0; i<iSData.mapping.size() && removal_count < remove_n_vertices; i++)
+//   {
+//     if (removal_count + from_n_vertices == initial_vertex_count) { found_start = true; }
+//     if (iSData.mapping[i]->op_type == SIMP_OP::V_REMOVAL) { removal_count++; }
+//     if (!found_start) { continue; }
+//     iSData.mapping[i]->map_to_coarse(iSData.mapped_points, iSData.mapped_by_triangle);
+//   }
+//   std::cout << "removed " << removal_count << "vertices from initially " << initial_vertex_count << " to get to " << n_vertices << " vertices." << std::endl;
+// }
+void map_current_from_to(iSimpData& iSData, const int from_mapping_idx, const int to_mapping_idx)
+{
+  for(int i=from_mapping_idx; i<to_mapping_idx; i++)
+  {
+    iSData.mapping[i]->map_to_coarse(iSData.mapped_points, iSData.mapped_by_triangle);
+  }
+}
+
 // For an intrinsic edge to be (intrinsically) flippable two conditions have to hold:
 //   1. the edge adjacent triangles have to form a convex quad
 //   2. the edge endpoints have degree two or more
@@ -101,6 +154,8 @@ bool flip_intrinsic(iSimpData& iSData, const gcs::Edge edge)
 
   // update edge length
   iSData.L(edge.getIndex()) = flipped_edgelength(unfolded);
+  bool result = validate_intrinsic_edge_lengths(iSData);
+  if (!result) { std::cout << "occurred in flip_intrinsic for edge: " << edge.getIndex() << std::endl; }
   // add intrinsic flip into mapping queue
   iSData.mapping.push_back(std::make_unique<Edge_Flip>(Fk.getIndex(), Fl.getIndex(), unfolded, Fk_unique.first, Fl_unique.first));
 
@@ -109,6 +164,7 @@ bool flip_intrinsic(iSimpData& iSData, const gcs::Edge edge)
 
 bool flatten_vertex(iSimpData& iSData, const int vertex_idx)
 {
+  // std::cout << "flatten_vertex: " << std::endl;
   gcs::Vertex v = iSData.intrinsicMesh->vertex(vertex_idx);
   double threshold = 0.0001;
 
@@ -122,6 +178,16 @@ bool flatten_vertex(iSimpData& iSData, const int vertex_idx)
   {
     int idx = E.getIndex();
     L_opt.insert({idx, iSData.L[idx]});
+  }
+
+  if (L_opt.size() == 2) { std::cout << dye("Found 2-face vertex during flattening!", RED) << std::endl; }
+  for (gcs::Face F : v.adjacentFaces()) {
+    for (gcs::Face neighbor : F.adjacentFaces())
+    {
+      if (F.getIndex() == neighbor.getIndex()) {
+        std::cout << dye("Found self-face during flattening!", RED) << std::endl;
+      }
+    }
   }
 
   double step = 1000.0;
@@ -165,9 +231,9 @@ bool flatten_vertex(iSimpData& iSData, const int vertex_idx)
     i++;
   }
 
-  double eps = 0.0000001;
+  double eps = 0.000001;
   // if u_i is close to zero, the flattening is an identity operation (so we return a success, but don't insert a mapping operation into the mapping)
-  if(u_i < eps) { return true; }
+  // if(u_i < eps) { return true; } // NOTE: This supposed optimization lead to big errors in accuracy and NaN.
 
   // check if length's satisfy the triangle inequality
   for (gcs::Face F : v.adjacentFaces())
@@ -200,6 +266,10 @@ bool flatten_vertex(iSimpData& iSData, const int vertex_idx)
   for (const auto& pair : L_opt)
   {
     iSData.L[pair.first] = pair.second;
+    if (pair.second <= 1e-6) { std::cout << dye("flatten_vertex: calculated " + std::to_string(pair.second) + " edge length!", RED) << std::endl; } // TODO: remove after testing
+    if (pair.second != pair.second) { std::cout << dye("flatten_vertex: calculated " + std::to_string(pair.second) + " edge length!", RED) << std::endl; } // TODO: remove after testing
+    bool result = validate_intrinsic_edge_lengths(iSData);
+    if (!result) { std::cout << "occurred in flatten_vertex" << std::endl; }
   }
   std::vector<int> faces = std::vector<int>();
   std::vector<int> face_vertex_indices = std::vector<int>();
@@ -439,6 +509,7 @@ bool remove_vertex(iSimpData& iSData, const int vertex_idx)
 // greedily flip edges, until delaunay
 void flip_to_delaunay(iSimpData& iSData)
 {
+  // std::cout << "flip_to_delaunay: " << std::endl;
   for (gcs::Edge E : iSData.intrinsicMesh->edges())
   {
     if(E.isBoundary()) { continue; }
@@ -651,6 +722,17 @@ double intrinsic_curvature_error(const iSimpData& iSData, const gcs::Vertex vert
   {
     int idx = E.getIndex();
     L_opt.insert({idx, iSData.L[idx]});
+  }
+  
+  // TODO:
+  if (L_opt.size() == 2) { std::cout << dye("Found 2-face vertex during flattening!", RED) << std::endl; }
+  for (gcs::Face F : vertex.adjacentFaces()) {
+    for (gcs::Face neighbor : F.adjacentFaces())
+    {
+      if (F.getIndex() == neighbor.getIndex()) {
+        std::cout << dye("Found self-face during flattening!", RED) << std::endl;
+      }
+    }
   }
 
   double step = 1000.0;
@@ -1052,6 +1134,7 @@ double gaussian_curvature(const iSimpData& iSData, const gcs::Vertex& vertex)
 
 double find_tangent_space_angle(const iSimpData& iSData, const gcs::Edge& edge, const gcs::Vertex& vertex)
 {
+  // std::cout << "find_tangent_space_angle:" << std::endl;
   double angle = 0.0;
   // std::cout << "finding tangent space angle of edge: " << edge.getIndex() << " around vertex " << vertex.getIndex() << " with reference edge: " << iSData.intrinsicMesh->edge(iSData.tangent_space_reference_edges[vertex.getIndex()]).getIndex() << std::endl;
 
@@ -1135,4 +1218,51 @@ PolarVector2D parallel_transport(const iSimpData& iSData, PolarVector2D tangent_
   tangent_vector[0] = target_tangent_space_angle;
 
   return tangent_vector;
+}
+
+bool validate_intrinsic_edge_lengths(const iSimpData& iSData)
+{
+  for (gcs::Face F : iSData.intrinsicMesh->faces())
+  {
+    int i = 0;
+    int l_ij_idx, l_ik_idx, l_jk_idx;
+    for (gcs::Edge E : F.adjacentEdges())
+    {
+      if (i == 0) {
+        l_ij_idx = E.getIndex();
+      } else if (i == 1) {
+        l_ik_idx = E.getIndex();
+      } else if (i == 2) {
+        l_jk_idx = E.getIndex();
+      }
+      i++;
+    }
+
+    double eps = 1e-6;
+    double l_ij = iSData.L[l_ij_idx];
+    double l_ik = iSData.L[l_ik_idx];
+    double l_jk = iSData.L[l_jk_idx];
+    if (l_ij > l_ik + l_jk + eps)
+    {
+      // TODO: perform edge flips to try to mitigate it
+      std::cout << dye("validate_intrinsic_edge_lengths: Found triangle inequality violation! triangle "
+       + std::to_string(F.getIndex()) + "(l_ij: " + std::to_string(l_ij) + " > l_ik: " + std::to_string(l_ik) + " + l_jk: " + std::to_string(l_jk) + ")", RED) << std::endl;
+      return false;
+    }
+    if (l_ik > l_ij + l_jk + eps)
+    {
+      // TODO: perform edge flips to try to mitigate it
+      std::cout << dye("validate_intrinsic_edge_lengths: Found triangle inequality violation! triangle "
+       + std::to_string(F.getIndex()) + "(l_ik: " + std::to_string(l_ik) + " > l_ij: " + std::to_string(l_ij) + " + l_jk: " + std::to_string(l_jk) + ")", RED) << std::endl;
+      return false;
+    }
+    if (l_jk > l_ik + l_ij + eps)
+    {
+      // TODO: perform edge flips to try to mitigate it
+      std::cout << dye("validate_intrinsic_edge_lengths: Found triangle inequality violation! triangle "
+       + std::to_string(F.getIndex()) + "(l_jk: " + std::to_string(l_jk) + " > l_ik: " + std::to_string(l_ik) + " + l_ij: " + std::to_string(l_ij) + ")", RED) << std::endl;
+      return false;
+    }
+  }
+  return true;
 }
