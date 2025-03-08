@@ -42,6 +42,7 @@ BarycentricPoint to_barycentric(const Point2D& point, const Point2D& A, const Po
 
 // calculate interior angle at corner i of a triangle ijk with edge lengths l_ij, l_ik, l_jk (via law of cosines)
 double angle_i_from_lengths(const double l_ij, const double l_ik, const double l_jk);
+double triangle_area_from_lengths(const double l_ij, const double l_ik, const double l_jk);
 
 double scalar_cross(const Vector2D& v, const Vector2D& w);
 

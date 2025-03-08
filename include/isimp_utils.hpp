@@ -12,13 +12,13 @@
 void register_point(iSimpData& iSData, const BarycentricPoint point, const TexCoord texcoord, const int face_idx);
 void map_registered(iSimpData& iSData, const int n_vertices);
 void map_registered(iSimpData& iSData);
-// DANGER! These functions expects a specific matching state of iSData & mapping_idx to work properly.
+// DANGER! These functions expect a specific matching state of iSData & mapping_idx to work properly.
 // void map_current_from(iSimpData& iSData, const int from_n_vertices);
 // void map_current_from_to(iSimpData& iSData, const int from_n_vertices, const int n_vertices);
 void map_current_from(iSimpData& iSData, const int from_mapping_idx);
 void map_current_from_to(iSimpData& iSData, const int from_mapping_idx, const int to_mapping_idx);
-// TODO: implement simplification operations
-// returns whether the edge flip could be performed/was successful
+
+// simplification operations (returns whether the operation could be performed/was successful)
 bool is_edge_flippable(const iSimpData& iSData, const Quad2D& quad, const gcs::Edge edge);
 bool flip_intrinsic(iSimpData& iSData, const gcs::Edge edge);
 bool flatten_vertex(iSimpData& iSData, const int vertex_idx);

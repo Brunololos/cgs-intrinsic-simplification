@@ -13,6 +13,7 @@
 #include <ctime>
 
 #include "isimp.hpp"
+#include "heat_diff.hpp"
 #include "screenshot.hpp"
 #include "lscm_wrapper.hpp"
 #include "query_texture_barycentrics.hpp"
@@ -462,7 +463,7 @@ int main(int argc, char *argv[])
 
   // register_texels();
   query_texture_barycentrics(UV, UF, TEXTURE_WIDTH, TEXTURE_HEIGHT, iSData);
-  // // THese are inserted:
+  // // These are inserted:
   map_registered(iSData);
   mapped_by_triangles.push_back(iSData.mapped_by_triangle);
   mapped_pointss.push_back(iSData.mapped_points);
@@ -478,6 +479,12 @@ int main(int argc, char *argv[])
   // viewer.core().background_color.head(3) = CM.row(0).head(3).cast<float>();
   // // update_points()
   // viewer.launch();
+
+  // TODO: this is neat, but for the intrinsic case, still the custom edge lengths need to be used.
+  // iSData.inputGeometry->requireCotanLaplacian();
+  // iSData.inputGeometry->requireVertexGalerkinMassMatrix();
+  // Eigen::SparseMatrix<double> L = iSData.inputGeometry->cotanLaplacian;
+  // Eigen::SparseMatrix<double> M = iSData.inputGeometry->vertexGalerkinMassMatrix;
 
   std::cout << "\n\nBeginning Simplification..." << std::endl;
   // while (!iSData.hasConverged && iSData.intrinsicMesh->nVertices() > coarsen_to_n_vertices)
@@ -518,7 +525,7 @@ int main(int argc, char *argv[])
 
   polyscope::init();
   // psCoarseMesh  = polyscope::registerSurfaceMesh("coarse mesh", U, H); // TODO: visualize coarse mesh
-  psMesh  = polyscope::registerSurfaceMesh("input mesh", V, F);
+  psMesh = polyscope::registerSurfaceMesh("input mesh", V, F);
 
   if (using_texture) {
     // convert parameterization to polyscope's desired input format

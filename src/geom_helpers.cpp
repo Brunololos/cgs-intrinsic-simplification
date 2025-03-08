@@ -234,6 +234,12 @@ double angle_i_from_lengths(const double l_ij, const double l_ik, const double l
   return acos(enumerator / denominator);
 }
 
+double triangle_area_from_lengths(const double l_ij, const double l_ik, const double l_jk)
+{
+  double theta_i = angle_i_from_lengths(l_ij, l_ik, l_jk);
+  return (l_ij * l_ik * sin(theta_i)) / 2.0;
+}
+
 double scalar_cross(const Vector2D& v, const Vector2D& w)
 {
   return v[0] * w[1] - v[1] * w[0];

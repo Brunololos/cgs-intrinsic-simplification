@@ -118,6 +118,7 @@ bool is_edge_flippable(const iSimpData& iSData, const Quad2D& quad, const gcs::E
 
 bool flip_intrinsic(iSimpData& iSData, const gcs::Edge edge)
 {
+  // TODO: put this in a helper function
   gcs::Face Fk;
   gcs::Face Fl;
   bool t = true;
