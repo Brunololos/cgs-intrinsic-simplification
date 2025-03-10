@@ -31,6 +31,11 @@ int main(int argc, char *argv[])
 {
   std::string filename = "../../meshes/spot.obj";
   int coarsen_to_n_vertices;
+  int diffuse_over_n_steps;
+  double diffusion_stepsize;
+  double min_diff_stepsize = 0.0001;
+  double max_diff_stepsize = 0.5;
+
   int min_n_vertices = 0;
   bool using_texture = true;
 
@@ -56,8 +61,10 @@ int main(int argc, char *argv[])
   MatrixXuc R, G, B, A;
   int TEXTURE_WIDTH = 2000;
   int TEXTURE_HEIGHT = 2000;
-  std::vector<unsigned char> polyscope_texture = std::vector<unsigned char>();
+  std::vector<unsigned char> ps_triang_texture = std::vector<unsigned char>();
+  std::vector<unsigned char> ps_heat_texture = std::vector<unsigned char>();
   polyscope::SurfaceCornerParameterizationQuantity* q = nullptr;
+  polyscope::SurfaceCornerParameterizationQuantity* h = nullptr;
   polyscope::SurfaceMesh* psCoarseMesh;
   polyscope::SurfaceMesh* psMesh;
 
@@ -70,6 +77,8 @@ int main(int argc, char *argv[])
   }
 
   coarsen_to_n_vertices = V.rows();
+  diffuse_over_n_steps = 0;
+  diffusion_stepsize = 0.0001;
   colorings = std::vector<Eigen::VectorXi>();
   mapped_by_triangles = std::vector<std::vector<std::vector<int>>>();
   mapped_pointss = std::vector<std::vector<BarycentricPoint>>();
@@ -94,6 +103,10 @@ int main(int argc, char *argv[])
 
   iSimpData iSData;
   initMesh(V, F, iSData);
+
+  // HEAT DIFFUSION
+  heatDiffData hdData;
+  initHeatDiff(hdData, iSData);
 
   // randomize seed
   srand(time(NULL));
@@ -151,6 +164,9 @@ int main(int argc, char *argv[])
     255.0 / 255.0, 255.0 / 255.0, 153.0 / 255.0,
     177.0 / 255.0, 89.0 / 255.0, 40.0 / 255.0
   ).finished();
+
+  Eigen::Vector3d Red = (Eigen::Vector3d() << 202.0 / 255.0, 0.0 / 255.0, 32.0 / 255.0).finished();
+  Eigen::Vector3d Blue = (Eigen::Vector3d() << 5.0 / 255.0, 113.0 / 255.0, 176.0 / 255.0).finished();
 
   // coloring
   int numVorF = (true /* true: visualize over vertices, false: visualize over faces */) ? V.rows() : F.rows();
@@ -222,7 +238,8 @@ int main(int argc, char *argv[])
   auto init_viewer_data = [&]()
   {
     // polyscope_texture = std::vector<unsigned char>(4 * TEXTURE_WIDTH * TEXTURE_HEIGHT);
-    polyscope_texture.resize(4 * TEXTURE_WIDTH * TEXTURE_HEIGHT);
+    ps_triang_texture.resize(4 * TEXTURE_WIDTH * TEXTURE_HEIGHT);
+    ps_heat_texture.resize(4 * TEXTURE_WIDTH * TEXTURE_HEIGHT);
   //   // prev face-based coloring: viewer.data().set_face_based(true);
   //   // viewer.data().set_texture(R,G,B,A);
   //   // viewer.data().set_colors(C);
@@ -306,8 +323,7 @@ int main(int argc, char *argv[])
     colorings.push_back(Coloring);
   };
 
-
-  const auto &update_texture = [&]()
+  const auto &update_triang_texture = [&]()
   {
     int num_triangles = iSData.mapped_by_triangle.size();
     int num_colors = CM.rows() - 1;
@@ -325,18 +341,63 @@ int main(int argc, char *argv[])
         // R(texcoord[0], texcoord[1]) = CM((i % num_colors) + 1, 0) * 255;
         // G(texcoord[0], texcoord[1]) = CM((i % num_colors) + 1, 1) * 255;
         // B(texcoord[0], texcoord[1]) = CM((i % num_colors) + 1, 2) * 255;
-        polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 0] = CM(colorings[n_removals](i), 0) * 255;
-        polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 1] = CM(colorings[n_removals](i), 1) * 255;
-        polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 2] = CM(colorings[n_removals](i), 2) * 255;
+        ps_triang_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 0] = CM(colorings[n_removals](i), 0) * 255;
+        ps_triang_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 1] = CM(colorings[n_removals](i), 1) * 255;
+        ps_triang_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 2] = CM(colorings[n_removals](i), 2) * 255;
         // polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 0] = CM(i % num_colors, 0) * 255;
         // polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 1] = CM(i % num_colors, 1) * 255;
         // polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 2] = CM(i % num_colors, 2) * 255;
-        polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 3] = 255;
+        ps_triang_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 3] = 255;
         // std::cout << "Setting texcoord: (" << texcoord[0] << ", " << texcoord[1] << "): R=" << CM(i%9, 0) << ", G=" << CM(i%9, 1) << ", B=" << CM(i%9, 2) << std::endl;
       }
     }
     // viewer.data().set_texture(R, G, B);
     // std::cout << "write_success: " << igl::png::writePNG(R, G, B, A, "H:/GIT/cgs-intrinsic-simplification/textures/object_texture.png") << std::endl;
+  };
+
+  const auto &update_heat_texture = [&]()
+  {
+    int num_triangles = iSData.mapped_by_triangle.size();
+
+    // draw texture
+    for (int i = 0; i < num_triangles; i++)
+    {
+      int v1_idx, v2_idx, v3_idx;
+      int k = 0;
+      for (gcs::Vertex V : iSData.inputMesh->face(i).adjacentVertices())
+      {
+        if (k==0) { v1_idx = V.getIndex(); }
+        else if (k==1) { v2_idx = V.getIndex(); }
+        else if (k==2) { v3_idx = V.getIndex(); }
+        k++;
+      }
+      double heat1 = hdData.final_heat[v1_idx];
+      double heat2 = hdData.final_heat[v2_idx];
+      double heat3 = hdData.final_heat[v3_idx];
+      for (int j = 0; j < iSData.mapped_by_triangle[i].size(); j++)
+      {
+        int original_idx = iSData.mapped_by_triangle[i][j];
+        TexCoord texcoord = iSData.tracked_texcoords[original_idx];
+
+        // TODO: calculate heat value via interpolation
+        BarycentricPoint p = iSData.mapped_points[original_idx];
+        double heat = heat1*p[0] + heat2*p[1] + heat3*p[2];
+        // std::cout << "heat: " << heat << std::endl;
+        // if (heat > 1.0) { std::cout << "encountered excessive heat: " << heat << std::endl; }
+        // if (heat < 0.0) { std::cout << "encountered weird heat: " << heat << std::endl; }
+        // TODO: calculate corresponding color
+        ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 0] = (heat*Red(0) + (1.0 - heat)*Blue(0)) * 255;
+        ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 1] = (heat*Red(1) + (1.0 - heat)*Blue(1)) * 255;
+        ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 2] = (heat*Red(2) + (1.0 - heat)*Blue(2)) * 255;
+        ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 3] = 255;
+      }
+    }
+  };
+
+  const auto &update_textures = [&]()
+  {
+    update_triang_texture();
+    update_heat_texture();
   };
 
   const auto update_mesh_points = [&](Eigen::VectorXi &selected_indices, Eigen::MatrixXd &selected_constraints)
@@ -388,7 +449,7 @@ int main(int argc, char *argv[])
     // viewer.data().clear();
     // viewer.data().set_mesh(U, H);
     init_viewer_data();
-    update_texture();
+    update_textures();
     // update_points();
     // viewer.draw();
   };
@@ -398,12 +459,14 @@ int main(int argc, char *argv[])
   {
     // viewer.data().set_vertices(U);
     init_viewer_data();
-    update_texture();
+    update_textures();
     // update_points();
     // viewer.draw();
   };
 
   auto callback = [&]() {
+    ImGui::Text("Intrinsic Simplification");
+    ImGui::Separator();
     if(ImGui::SliderInt("remaining vertices", &coarsen_to_n_vertices, min_n_vertices, iSData.inputMesh->nVertices()))
     {
       do_texture_update = true;
@@ -413,9 +476,36 @@ int main(int argc, char *argv[])
         coarsen_to_n_vertices = std::max(std::min(coarsen_to_n_vertices - 1, (int) iSData.inputMesh->nVertices()), min_n_vertices);
         do_texture_update = true;
     }
+    ImGui::SameLine();
     if (ImGui::Button("Add Vertex"))
     {
         coarsen_to_n_vertices = std::max(std::min(coarsen_to_n_vertices + 1, (int) iSData.inputMesh->nVertices()), min_n_vertices);
+        do_texture_update = true;
+    }
+    ImGui::Dummy(ImVec2(0.0f, 10.0f));
+    ImGui::Text("Heat Diffusion");
+    ImGui::Separator();
+    // if(ImGui::SliderFloat("Diffusion Stepsize", &diffusion_stepsize, 0.0001, 0.5))
+    if(ImGui::SliderScalar("Diffusion Stepsize", ImGuiDataType_Double, &diffusion_stepsize, &min_diff_stepsize, &max_diff_stepsize))
+    // if(ImGui::SliderScalar("Diffusion Stepsize", ImGuiDataType_Double, &diffusion_stepsize, 0.0001, 0.5))
+    {
+      // TODO: only update heat texture, not only triangulation texture
+      do_texture_update = true;
+    }
+    if(ImGui::SliderInt("Diffusion Steps", &diffuse_over_n_steps, 0, 100))
+    {
+      // TODO: only update heat texture, not only triangulation texture
+      do_texture_update = true;
+    }
+    if (ImGui::Button("Add Diffusion Step"))
+    {
+        diffuse_over_n_steps++;
+        do_texture_update = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Remove Diffusion Step"))
+    {
+        diffuse_over_n_steps = std::max(diffuse_over_n_steps - 1, 0);
         do_texture_update = true;
     }
     if (do_texture_update)
@@ -451,12 +541,19 @@ int main(int argc, char *argv[])
       // std::cout << "Last step mapping idx: " << simp_step_mapping_indices.at(simp_step_mapping_indices.size() - 1) << std::endl;
       // map_registered(iSData, coarsen_to_n_vertices);
       // std::cout << iSData.mapped_points.size() << std::endl;
-      update_texture();
+      diffuse_heat(hdData, diffusion_stepsize, diffuse_over_n_steps);
+      update_textures();
       if (q != nullptr) {
-        q->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, polyscope_texture, polyscope::TextureFormat::RGBA8);
-        q->setEnabled(true);
+        q->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_triang_texture, polyscope::TextureFormat::RGBA8);
+        // q->setEnabled(true);
         q->setStyle(polyscope::ParamVizStyle::TEXTURE);
         q->setCheckerSize(1);
+      }
+      if (h != nullptr) {
+        h->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_heat_texture, polyscope::TextureFormat::RGBA8);
+        // h->setEnabled(true);
+        h->setStyle(polyscope::ParamVizStyle::TEXTURE);
+        h->setCheckerSize(1);
       }
     }
   };
@@ -469,12 +566,13 @@ int main(int argc, char *argv[])
   mapped_pointss.push_back(iSData.mapped_points);
   snapshot_mapping_indices.push_back(0);
   simp_step_mapping_indices.push_back(0);
-  // update_texture();
+  // update_textures();
   // std::cout << "write_success: " << igl::png::writePNG(R, G, B, A, "H:/GIT/cgs-intrinsic-simplification/textures/object_texture.png") << std::endl;
   // // end insertion
   init_viewer_data();
   compute_coloring();
-  update_texture();
+  diffuse_heat(hdData, diffusion_stepsize, 0);
+  update_textures();
   // viewer.core().is_animating = true;
   // viewer.core().background_color.head(3) = CM.row(0).head(3).cast<float>();
   // // update_points()
@@ -521,7 +619,7 @@ int main(int argc, char *argv[])
 
   // coarsen_to_n_vertices = 5;
   // map_registered(iSData, coarsen_to_n_vertices);
-  // update_texture();
+  // update_textures();
 
   polyscope::init();
   // psCoarseMesh  = polyscope::registerSurfaceMesh("coarse mesh", U, H); // TODO: visualize coarse mesh
@@ -537,10 +635,17 @@ int main(int argc, char *argv[])
     }
     q = psMesh->addParameterizationQuantity("intrinsic triangulation", parameterization);
 
-    q->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, polyscope_texture, polyscope::TextureFormat::RGBA8);
+    q->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_triang_texture, polyscope::TextureFormat::RGBA8);
     q->setEnabled(true);
     q->setStyle(polyscope::ParamVizStyle::TEXTURE);
     q->setCheckerSize(1);
+
+    h = psMesh->addParameterizationQuantity("heat map", parameterization);
+
+    h->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_heat_texture, polyscope::TextureFormat::RGBA8);
+    // h->setEnabled(true);
+    h->setStyle(polyscope::ParamVizStyle::TEXTURE);
+    h->setCheckerSize(1);
   }
 
   polyscope::state::userCallback = callback;

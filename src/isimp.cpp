@@ -36,9 +36,9 @@ void initMesh(const Eigen::Matrix<double, -1, 3>& V, const Eigen::Matrix<int, -1
   {
     data.L(e.getIndex()) = data.inputGeometry->edgeLength(e);
     // /* TODO: remove */ std::cout << "edge(" << e.firstVertex().getIndex() << ", " << e.secondVertex().getIndex() << ") L(" << i << ") = " << data.L(i) << std::endl;
-    // if(data.L(e.getIndex()) == 0.0) {
-    //   std::cout << RED << "edge(" << e.firstVertex().getIndex() << ", " << e.secondVertex().getIndex() << ") L(" << i << ") = " << data.L(i) << RESET << std::endl;
-    // }
+    if(data.L(e.getIndex()) == 0.0) {
+      std::cout << RED << "edge(" << e.firstVertex().getIndex() << ", " << e.secondVertex().getIndex() << ") L(" << i << ") = " << data.L(i) << RESET << std::endl;
+    }
     i++;
   }
   bool result = validate_intrinsic_edge_lengths(data);

@@ -13,8 +13,9 @@ struct heatDiffData {
     Eigen::MatrixXd L;
 };
 
+void initHeatDiff(heatDiffData& hdData, const iSimpData& iSData);
 void initHeat(heatDiffData& hdData, const iSimpData& iSData);
-void diffuse_heat(heatDiffData& hdData, const int steps);
+void diffuse_heat(heatDiffData& hdData, const double stepsize, const int steps);
 
 // build laplacian with current intrinsic mesh
 void build_cotan_mass(heatDiffData& hdData, const iSimpData& iSData);
