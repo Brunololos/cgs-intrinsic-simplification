@@ -29,16 +29,12 @@ void diffuse_heat(heatDiffData& hdData, const double stepsize, const int steps)
     Eigen::MatrixXd A, B;
     A = hdData.M - stepsize * hdData.L;
 
-    std::cout << "Computed A matrix." << std::endl;
     hdData.final_heat = hdData.initial_heat;
-    std::cout << "Set initial heat." << std::endl;
     for (int i=0; i<steps; i++)
     {
         // TODO: in the case for a simplified mesh, we need to only consider a subset of the initial heat, i.e. select those entries into a new matrix
         B = hdData.M * hdData.final_heat;
-        std::cout << "Computed B matrix." << std::endl;
         hdData.final_heat = A.ldlt().solve(B);
-        std::cout << "Solved implicit Newton step!" << std::endl;
     }
     std::cout << "Successfully diffused heat!" << std::endl;
 }
@@ -50,9 +46,10 @@ void build_cotan_mass(heatDiffData& hdData, const iSimpData& iSData)
     hdData.M = Eigen::MatrixXd::Zero(n, n);
     for (int i=0; i < n; i++)   // TODO: this iteration does not work for reduced meshes
     {
-        // TODO: replace with cotan mass
-        hdData.M(i, i) = barycentric_lumped_mass(iSData, i);
+        hdData.M(i, i) = circumcentric_dual_mass(iSData, i);
+        // std::cout << "vertex " << i << " area mass: " << hdData.M(i, i) << std::endl;
     }
+    // std::cout << "computed total area mass: " << total_mass(hdData) << std::endl;
 }
 
 void build_cotan_laplacian(heatDiffData& hdData, const iSimpData& iSData)
@@ -75,14 +72,14 @@ void build_cotan_laplacian(heatDiffData& hdData, const iSimpData& iSData)
             hdData.L(i, j) = edge_weight;
             vertex_weight += edge_weight;
         }
-        hdData.L(i, i) = vertex_weight;
+        hdData.L(i, i) = -vertex_weight;
     }
 }
 
 double barycentric_lumped_mass(const iSimpData& iSData, const int vertex_idx)
 {
     // if (iSData.intrinsicMesh->nVertices() <= vertex_idx) { std::cout << RED << "passed out of bounds vertex idx to barycentric_lumped_mass!" << RESET << std::endl; exit(-1); }
-    double totalArea = 0.0;
+    double total_area = 0.0;
     for (gcs::Face F : iSData.intrinsicMesh->vertex(vertex_idx).adjacentFaces())
     {
         int i = 0;
@@ -94,9 +91,109 @@ double barycentric_lumped_mass(const iSimpData& iSData, const int vertex_idx)
             else if (i == 2) { l_jk = iSData.L(E.getIndex(), 0); }
             i++;
         }
-        totalArea += triangle_area_from_lengths(l_ij, l_ik, l_jk);
+        total_area += triangle_area_from_lengths(l_ij, l_ik, l_jk);
     }
-    return totalArea / 3.f;
+    return total_area / 3.f;
+}
+
+double circumcentric_dual_mass(const iSimpData& iSData, const int vertex_idx)
+{
+    double total_area = 0.0;
+    gcs::Vertex V = iSData.intrinsicMesh->vertex(vertex_idx);
+    double epsilon = std::numeric_limits<double>().epsilon();
+
+    for (gcs::Face F : V.adjacentFaces())
+    {
+        CircumcentricShape calculation_case = CircumcentricShape::ZERO;
+        double area_contribution;
+        std::array<int, 3> face_edges = order_triangle_edge_indices(F, vertex_idx);
+
+        int e_ij = face_edges[0];
+        int e_ik = face_edges[1];
+        int e_jk = face_edges[2];
+        double l_ij = iSData.L(e_ij);
+        double l_ik = iSData.L(e_ik);
+        double l_jk = iSData.L(e_jk);
+        double midpoint_l_ij = l_ij/2.0;
+        double midpoint_l_ik = l_ik/2.0;
+
+        // Swap so the first edge is always the shorter one
+        if (midpoint_l_ij > midpoint_l_ik)
+        {
+            double tmp_len = l_ij;
+            l_ij = l_ik;
+            l_ik = tmp_len;
+
+            tmp_len = midpoint_l_ij;
+            midpoint_l_ij = midpoint_l_ik;
+            midpoint_l_ik = tmp_len;
+
+            int tmp_e = e_ij;
+            e_ij = e_ik;
+            e_ik = tmp_e;
+        }
+
+        // The angle beta is only is reasonable, when considering a right triangle, i.e. in the TRIANGLE/CHOPPED TRIANGLE CASES
+        double alpha = angle_i_from_lengths(l_ij, l_ik, l_jk);
+        double beta = M_PI/2.0 - alpha;
+
+        // calc triangle side lengths
+        double b = midpoint_l_ij;
+        double a = tan(alpha)*b;
+        double c = sqrt(a*a + b*b);
+
+        // NOTE: If the angle is 0 or 180 degrees, the circumcentric area of p0 is 0.
+        // NOTE: If the angle is greater than 0 degrees and less than 90 degrees, the circumcentric area of p0 can be calculated based on the area of the triangle between the midpoint1 and midpoint2 edges and the line containing midpoint1 with the direction of the normal of the midpoint1 edge.
+        // NOTE: If the angle is 90 degrees, the circumcentric area of p0 can be calculated as the square of the length of the edge between p0 and midpoin1.
+        // NOTE: If the angle is greater than 90 degrees and less than 180 degrees, the circumcentric area of p0 can be calculated based on the quadrilateral between the midpoint1 and midpoint2 edges and the two lines each containing either midpoint1 or midpoint2 with either the direction of the normal of the midpoint1 or midpoint2 edge.
+        if (alpha < M_PI/2 - epsilon && c <= midpoint_l_ik)                     { calculation_case = CircumcentricShape::TRIANGLE; }
+        if (alpha < M_PI/2 - epsilon && c > midpoint_l_ik)                      { calculation_case = CircumcentricShape::CHOPPED_TRIANGLE; }
+        if (alpha >= M_PI/2 - epsilon && alpha <= M_PI/2 + epsilon)             { calculation_case = CircumcentricShape::RECTANGLE; }
+        if (alpha > M_PI/2 + epsilon && alpha < M_PI - epsilon)                 { calculation_case = CircumcentricShape::CHOPPED_QUADRILATERAL; }
+
+        switch(calculation_case)
+        {
+            default:
+            case CircumcentricShape::ZERO:
+                area_contribution = 0;
+                break;
+            case CircumcentricShape::TRIANGLE:
+                area_contribution = a*b/2.0;
+                break;
+            case CircumcentricShape::CHOPPED_TRIANGLE:
+            {
+                // calc chopped off triangle side lengths
+                double sa = c - midpoint_l_ik;
+                double sb = tan(beta)*sa;
+
+                area_contribution = (a*b - sa*sb)/2.0;
+                break;
+            }
+            case CircumcentricShape::RECTANGLE:
+                area_contribution = midpoint_l_ij*midpoint_l_ik;
+                break;
+            case CircumcentricShape::CHOPPED_QUADRILATERAL:
+            {
+                double triangle_area = 2.0*midpoint_l_ij*midpoint_l_ik*sin(alpha);
+
+                double beta1 = angle_i_from_lengths(l_ij, l_jk, l_ik);
+                double beta2 = angle_i_from_lengths(l_ik, l_jk, l_ij);
+                double alpha1 = M_PI/2.0 - beta1;
+                double alpha2 = M_PI/2.0 - beta2;
+                double b1 = midpoint_l_ij / tan(alpha1);
+                double b2 = midpoint_l_ik / tan(alpha2);
+                double sta1 = abs(midpoint_l_ij*b1/2.0);
+                double sta2 = abs(midpoint_l_ik*b2/2.0);
+
+                area_contribution = triangle_area - sta1 - sta2;
+                break;
+            }
+        }
+
+        total_area += area_contribution;
+    }
+
+    return total_area;
 }
 
 double cotan_weight(const iSimpData& iSData, const int edge_idx)
@@ -165,4 +262,14 @@ double cotan_weight(const iSimpData& iSData, const int edge_idx)
     }
 
     return weight / 2.0;
+}
+
+double total_mass(const heatDiffData& hdData)
+{
+    double total_area = 0.0;
+    for (int i=0; i<hdData.M.rows(); i++)
+    {
+        total_area += hdData.M(i, i);
+    }
+    return total_area;
 }

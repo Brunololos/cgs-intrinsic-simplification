@@ -34,7 +34,7 @@ int main(int argc, char *argv[])
   int diffuse_over_n_steps;
   double diffusion_stepsize;
   double min_diff_stepsize = 0.0001;
-  double max_diff_stepsize = 0.5;
+  double max_diff_stepsize = 0.01;
 
   int min_n_vertices = 0;
   bool using_texture = true;
@@ -78,7 +78,7 @@ int main(int argc, char *argv[])
 
   coarsen_to_n_vertices = V.rows();
   diffuse_over_n_steps = 0;
-  diffusion_stepsize = 0.0001;
+  diffusion_stepsize = 0.005;
   colorings = std::vector<Eigen::VectorXi>();
   mapped_by_triangles = std::vector<std::vector<std::vector<int>>>();
   mapped_pointss = std::vector<std::vector<BarycentricPoint>>();
@@ -374,6 +374,9 @@ int main(int argc, char *argv[])
       double heat1 = hdData.final_heat[v1_idx];
       double heat2 = hdData.final_heat[v2_idx];
       double heat3 = hdData.final_heat[v3_idx];
+      if (heat1 > 1.0) { std::cout << "encountered excessive heat: " << heat1 << std::endl; }
+      if (heat2 > 1.0) { std::cout << "encountered excessive heat: " << heat2 << std::endl; }
+      if (heat3 > 1.0) { std::cout << "encountered excessive heat: " << heat3 << std::endl; }
       for (int j = 0; j < iSData.mapped_by_triangle[i].size(); j++)
       {
         int original_idx = iSData.mapped_by_triangle[i][j];
@@ -381,8 +384,12 @@ int main(int argc, char *argv[])
 
         // TODO: calculate heat value via interpolation
         BarycentricPoint p = iSData.mapped_points[original_idx];
+        double psum = p[0] + p[1] + p[2];
+        if (psum > 1.0) { p = p / psum; }
+
         double heat = heat1*p[0] + heat2*p[1] + heat3*p[2];
         // std::cout << "heat: " << heat << std::endl;
+        if (p[0] + p[1] + p[2] > 1.0) { std::cout << "encountered excessive barycentric coordinates: (" << p[0] << ", " << p[1] << ", " << p[2] << ") => " << p[0] + p[1] + p[2] << std::endl; }
         // if (heat > 1.0) { std::cout << "encountered excessive heat: " << heat << std::endl; }
         // if (heat < 0.0) { std::cout << "encountered weird heat: " << heat << std::endl; }
         // TODO: calculate corresponding color

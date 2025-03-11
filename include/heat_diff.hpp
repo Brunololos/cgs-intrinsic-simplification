@@ -4,6 +4,8 @@
 #include "geom_helpers.hpp"
 #include "isimp_utils.hpp"
 
+enum class CircumcentricShape { ZERO, TRIANGLE, CHOPPED_TRIANGLE, RECTANGLE, CHOPPED_QUADRILATERAL };
+
 struct heatDiffData {
     Eigen::Matrix<double, -1, 1> initial_heat;
     Eigen::Matrix<double, -1, 1> final_heat;
@@ -22,6 +24,10 @@ void build_cotan_mass(heatDiffData& hdData, const iSimpData& iSData);
 void build_cotan_laplacian(heatDiffData& hdData, const iSimpData& iSData);
 
 double barycentric_lumped_mass(const iSimpData& iSData, const int vertex_idx);
+double circumcentric_dual_mass(const iSimpData& iSData, const int vertex_idx);
 double cotan_weight(const iSimpData& iSData, const int edge_idx);
+
+// Verification
+double total_mass(const heatDiffData& hdData);
 
 #endif
