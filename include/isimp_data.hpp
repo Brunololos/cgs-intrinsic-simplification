@@ -28,6 +28,8 @@ struct iSimpData {
 
   // edge lengths in the intrinsic domain
   Eigen::Matrix<double, -1, 1> L;
+  Eigen::Matrix<double, -1, 1> inputL;
+  Eigen::Matrix<double, -1, 1> recovered_L;
 
   // intrinsic simplification quantities
   // Vertex masses (M_minus, M_plus)
@@ -43,6 +45,7 @@ struct iSimpData {
   std::unique_ptr<gcs::ManifoldSurfaceMesh> inputMesh;
   std::unique_ptr<gcs::VertexPositionGeometry> inputGeometry;
   std::unique_ptr<gcs::ManifoldSurfaceMesh> intrinsicMesh;
+  std::unique_ptr<gcs::ManifoldSurfaceMesh> recoveredMesh;
 
   // edges that define the angle 0 of the tangent spaces, centered on a vertex
   Eigen::Matrix<int, -1, 1> tangent_space_reference_edges;
@@ -79,6 +82,12 @@ class Mapping_operation {
         {
             std::cout << "ALERT! Called map_to_coarse of superclass!" << std::endl;
         }
+
+        virtual int reduced_primitive_idx()
+        {
+            std::cout << "ALERT! Called reduced_primitive_idx of superclass!" << std::endl;
+            return -1;
+        }
 };
 
 // intrinsic flip:
@@ -89,6 +98,8 @@ class Mapping_operation {
 // mapping for intrinsic edge flips
 class Edge_Flip : public Mapping_operation {
   public:
+    // replay parameter
+    int edge_idx;
     int Fk_idx;
     int Fl_idx;
 
@@ -103,9 +114,10 @@ class Edge_Flip : public Mapping_operation {
     // std::array<std::array<Point2D, 3>, 3> Fk_v_order;
     // std::array<std::array<Point2D, 3>, 3> Fl_v_order;
 
-    Edge_Flip(const int Fk_idx_, const int Fl_idx_, const Quad2D quad_, const int Fk_unique_v_idx_, const int Fl_unique_v_idx_)
+    Edge_Flip(const int edge_idx_, const int Fk_idx_, const int Fl_idx_, const Quad2D quad_, const int Fk_unique_v_idx_, const int Fl_unique_v_idx_)
     {
       op_type = SIMP_OP::E_FLIP;
+      edge_idx = edge_idx_;
       Fk_idx = Fk_idx_;
       Fl_idx = Fl_idx_;
 
@@ -217,23 +229,27 @@ class Edge_Flip : public Mapping_operation {
         }
       }
     }
+
+    int reduced_primitive_idx() { return edge_idx; }
 };
 
 // mapping for vertex flattening
 class Vertex_Flattening : public Mapping_operation {
   public:
+    // replay parameter
+    int vertex_idx;
     // mapping parameters
     // mapped faces
     std::vector<int> F_idxs;
     // indices of flattened vertex in mapped faces
     std::vector<int> v_idxs;
-    // int v_idx;
     // scaling factor resulting from removal
     double v_u;
 
-    Vertex_Flattening(const std::vector<int> F_idxs_, const std::vector<int> v_idxs_, const double v_u_)
+    Vertex_Flattening(const int vertex_idx_, const std::vector<int> F_idxs_, const std::vector<int> v_idxs_, const double v_u_)
     {
       op_type = SIMP_OP::V_FLATTEN;
+      vertex_idx = vertex_idx_;
       F_idxs = F_idxs_;
       v_idxs = v_idxs_;
       v_u = v_u_;
@@ -256,11 +272,16 @@ class Vertex_Flattening : public Mapping_operation {
         }
       }
     }
+
+    int reduced_primitive_idx() { return vertex_idx; }
 };
 
 // mapping for vertex removal
 class Vertex_Removal : public Mapping_operation {
   public:
+    // replay parameter
+    int vertex_idx;
+
     // mapping parameters
     std::vector<int> F_idxs;
     int F_res_idx;
@@ -273,9 +294,10 @@ class Vertex_Removal : public Mapping_operation {
 
 
     // Vertex_Removal(const std::vector<int> F_idxs_, const int F_res_idx_, const Quad2D quad_, const int F_jk_shared_v_idx_, const int F_jl_shared_v_idx_, const int F_kl_shared_v_idx_)
-    Vertex_Removal(const std::vector<int> F_idxs_, const int F_res_idx_, const Quad2D quad_, const std::vector<int> shared_idxs, const int F_res_permutation_)
+    Vertex_Removal(const int vertex_idx_, const std::vector<int> F_idxs_, const int F_res_idx_, const Quad2D quad_, const std::vector<int> shared_idxs, const int F_res_permutation_)
     {
       op_type = SIMP_OP::V_REMOVAL;
+      vertex_idx = vertex_idx_;
       F_idxs = F_idxs_;
       F_res_idx = F_res_idx_;
       F_res_permutation = F_res_permutation_;
@@ -401,4 +423,6 @@ class Vertex_Removal : public Mapping_operation {
         tracked_by_triangle[F_res_idx].push_back(p_idx);
       }
     }
+
+    int reduced_primitive_idx() { return vertex_idx; }
 };

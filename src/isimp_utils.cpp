@@ -158,7 +158,7 @@ bool flip_intrinsic(iSimpData& iSData, const gcs::Edge edge)
   bool result = validate_intrinsic_edge_lengths(iSData);
   if (!result) { std::cout << "occurred in flip_intrinsic for edge: " << edge.getIndex() << std::endl; }
   // add intrinsic flip into mapping queue
-  iSData.mapping.push_back(std::make_unique<Edge_Flip>(Fk.getIndex(), Fl.getIndex(), unfolded, Fk_unique.first, Fl_unique.first));
+  iSData.mapping.push_back(std::make_unique<Edge_Flip>(edge.getIndex(), Fk.getIndex(), Fl.getIndex(), unfolded, Fk_unique.first, Fl_unique.first));
 
   return true;
 }
@@ -279,7 +279,7 @@ bool flatten_vertex(iSimpData& iSData, const int vertex_idx)
     faces.push_back(F.getIndex());
     face_vertex_indices.push_back(find_vertex_face_index(F, vertex_idx));
   }
-  iSData.mapping.push_back(std::make_unique<Vertex_Flattening>(faces, face_vertex_indices, u_i));
+  iSData.mapping.push_back(std::make_unique<Vertex_Flattening>(vertex_idx, faces, face_vertex_indices, u_i));
 
   // calculate weighting
   double total_curvature_change = 0.0;
@@ -503,7 +503,7 @@ bool remove_vertex(iSimpData& iSData, const int vertex_idx)
       // Instead I just look what order gcs has determined and pass that.
 
       // insert vertex removal into mapping queue
-      iSData.mapping.push_back(std::make_unique<Vertex_Removal>(F_idxs, F_res, unfolded, shared_face_vertex_indices, F_res_permutation));
+      iSData.mapping.push_back(std::make_unique<Vertex_Removal>(vertex_idx, F_idxs, F_res, unfolded, shared_face_vertex_indices, F_res_permutation));
       return true;
 }
 
@@ -613,6 +613,7 @@ bool flip_vertex_to_deg3(iSimpData& iSData, const int vertex_idx)
   }
 
   // TODO: the edge flip reversion currently leads to some issues
+  // TODO: from brief testing, it seems like this code can be reinserted again without issues
   // I think that a case (possibly due to numerics) can arise, where a first edge flip can be performed, but not the three edge flips to undo it.
   // Because in my reasoning a quad that can be flipped once, should be able to be flipped any number of times.
   // // revert edge-flips
@@ -871,6 +872,174 @@ std::array<int, 3> order_triangle_vertex_indices(const gcs::Face& face, const in
   }
 
   return indices;
+}
+
+void replay_intrinsic_flip(iSimpData& iSData, const int edge_idx)
+{
+  gcs::Edge edge = iSData.recoveredMesh->edge(edge_idx);
+  // TODO: put this in a helper function
+  gcs::Face Fk;
+  gcs::Face Fl;
+  bool t = true;
+  for (gcs::Face F : edge.adjacentFaces())
+  {
+    if (t)
+    {
+      Fk = F;
+      t = false;
+    }
+    else {
+      Fl = F;
+    }
+  }
+
+  std::pair<int, int> Fk_unique = find_unique_vertex_index(Fk, edge);
+  std::pair<int, int> Fl_unique = find_unique_vertex_index(Fl, edge);
+  // get ordered intrinsic edge lengths from neighborhood
+  std::array<int, 5> edge_indices = order_quad_edge_indices(edge, Fk_unique.second, Fl_unique.second);
+  std::array<int, 4> vertex_indices = order_quad_vertex_indices(edge, Fk_unique.second, Fl_unique.second);
+  double l_ij = iSData.recovered_L(edge_indices[0]);
+  double l_ik = iSData.recovered_L(edge_indices[1]);
+  double l_jk = iSData.recovered_L(edge_indices[2]);
+  double l_il = iSData.recovered_L(edge_indices[3]);
+  double l_jl = iSData.recovered_L(edge_indices[4]);
+  Quad2D unfolded = unfold(l_ij, l_ik, l_jk, l_il, l_jl);
+
+  if (!is_edge_flippable(iSData, unfolded, edge)) { std::cout << RED << "intrinsic edge-flip replay failed!!!" << std::endl; exit(-1); }
+  bool couldFlip = iSData.recoveredMesh->flip(edge, false);
+  if (!couldFlip) { std::cout << RED << "intrinsic edge-flip replay failed!!!" << std::endl; exit(-1); }
+
+  // update edge length
+  iSData.recovered_L(edge.getIndex()) = flipped_edgelength(unfolded);
+  return;
+}
+
+void replay_vertex_flattening(iSimpData& iSData, const int vertex_idx)
+{
+  gcs::Vertex v = iSData.recoveredMesh->vertex(vertex_idx);
+  double threshold = 0.0001;
+
+  // check if vertex is interior or boundary vertex
+  double THETA_HAT = (!v.isBoundary()) ? 2.0 * M_PI : M_PI;
+  double u_i = 0.0;
+
+  // TODO: if vertex is boundary vertex, check if it is incident on a boundary self-edge, or is a vertex of a self-face. If it is, it is skipped and flattening fails.
+  std::unordered_map<int, double> L_opt = std::unordered_map<int, double>();
+  for (gcs::Edge E : v.adjacentEdges())
+  {
+    int idx = E.getIndex();
+    L_opt.insert({idx, iSData.recovered_L[idx]});
+  }
+
+  if (L_opt.size() == 2) { std::cout << dye("replay_vertex_flattening: Found 2-face vertex during flattening!", RED) << std::endl; }
+  for (gcs::Face F : v.adjacentFaces()) {
+    for (gcs::Face neighbor : F.adjacentFaces())
+    {
+      if (F.getIndex() == neighbor.getIndex()) {
+        std::cout << dye("replay_vertex_flattening: Found self-face during flattening!", RED) << std::endl;
+        exit(-1);
+      }
+    }
+  }
+
+  double step = 1000.0;
+  int i = 0;
+  while (std::abs(step) > threshold)
+  {
+    // Calculate newton step
+    double enumerator = THETA_HAT;
+    double denominator = 0.0;
+    for (gcs::Face F : v.adjacentFaces())
+    {
+      // get edge lengths
+      std::array<int, 3> edge_indices = order_triangle_edge_indices(F, vertex_idx);
+      double l_ij = L_opt[edge_indices[0]];
+      double l_ik = L_opt[edge_indices[1]];
+      double l_jk = iSData.recovered_L[edge_indices[2]];
+
+      if (l_jk < 0.0000000001) { std::cout << "replay_vertex_flattening: Calling angle_i with zero length" << std::endl; }
+      enumerator -= angle_i_from_lengths(l_ij, l_ik, l_jk);
+      if (l_ij < 0.0000000001) { std::cout << "replay_vertex_flattening: Calling angle_i with zero length" << std::endl; }
+      double theta_ij = angle_i_from_lengths(l_ik, l_jk, l_ij);
+      if (l_ik < 0.0000000001) { std::cout << "replay_vertex_flattening: Calling angle_i with zero length" << std::endl; }
+      double theta_ik = angle_i_from_lengths(l_ij, l_jk, l_ik);
+      denominator += 1.0/std::tan(theta_ij);
+      denominator += 1.0/std::tan(theta_ik);
+    }
+    denominator /= 2.0;
+
+    step = enumerator / denominator;
+    u_i = u_i - step;
+
+    // safety check for NaN
+    if (u_i != u_i) { std::cout << dye("Encountered NaN!", RED) << std::endl; return; }
+    // update edge lengths in L_opt with u_i as a parameter
+    for (const auto& pair : L_opt)
+    {
+      L_opt[pair.first] = std::exp(u_i / 2.0) * iSData.recovered_L[pair.first];
+      gcs::Edge E = iSData.recoveredMesh->edge(pair.first);
+      // std::cout << "  (" << pair.first << ": (" << E.firstVertex().getIndex() << ", " << E.secondVertex().getIndex() << ")" << ", " << L_opt[pair.first] << ")" << std::endl;
+    }
+    i++;
+  }
+
+  double eps = 0.000001;
+
+  // check if length's satisfy the triangle inequality
+  for (gcs::Face F : v.adjacentFaces())
+  {
+    // get edge lengths
+    std::array<int, 3> edge_indices = order_triangle_edge_indices(F, vertex_idx);
+    double l_ij = L_opt[edge_indices[0]];
+    double l_ik = L_opt[edge_indices[1]];
+    double l_jk = iSData.recovered_L[edge_indices[2]];
+
+    if ((l_ij > l_ik + l_jk + eps)
+    ||  (l_ik > l_ij + l_jk + eps)
+    ||  (l_jk > l_ij + l_ik + eps))
+    {
+      // TODO: perform edge flips to try to mitigate it
+      std::cout << dye("replay_vertex_flattening: Violated triangle inequality", RED) << std::endl;
+      exit(-1);
+    }
+  }
+
+  // add vertex flattening operation into mapping queue
+  for (const auto& pair : L_opt)
+  {
+    iSData.recovered_L[pair.first] = pair.second;
+    if (pair.second <= 1e-6) { std::cout << dye("replay_vertex_flattening: calculated " + std::to_string(pair.second) + " edge length!", RED) << std::endl; exit(-1); } // TODO: remove after testing
+    if (pair.second != pair.second) { std::cout << dye("replay_vertex_flattening: calculated " + std::to_string(pair.second) + " edge length!", RED) << std::endl; exit(-1); } // TODO: remove after testing
+  }
+  return;
+}
+
+void replay_vertex_removal(iSimpData& iSData, const int vertex_idx)
+{
+      // check if vertex is intrinsically flat (we can only remove it, when it is)
+      gcs::Vertex vertex = iSData.recoveredMesh->vertex(vertex_idx);
+      double THETA_HAT = (!vertex.isBoundary()) ? 2.0 * M_PI : M_PI;
+      if (vertex.isDead())
+      {
+        std::cout << RED << "replay_vertex_removal: Vertex has already been removed from mesh." << RESET << std::endl;
+        exit(-1);
+      }
+
+      // NOTE: gcs::manifold_surface_mesh implementation does not allow boundary vertex removal
+      if (vertex.isBoundary())
+      {
+        std::cout << RED << "replay_vertex_removal: Vertex is boundary vertex." << RESET << std::endl;
+        exit(-1);
+      }
+      // check if vertex is degree 3
+      if (vertex.degree() != 3)
+      {
+        exit(-1);
+      }
+
+      // remove vertex from intrinsicMesh
+      iSData.recoveredMesh->removeVertex(vertex);
+      return;
 }
 
 // orders triangle edge indices of triangle ijk by a vertex i

@@ -29,7 +29,7 @@ void build_heat_sample_indices(heatDiffData& hdData, const iSimpData& iSData)
     hdData.heat_sample_vertices = std::vector<int>();
     hdData.vertex_idcs_to_heat_idcs = std::unordered_map<int, int>();
     int i=0;
-    for (gcs::Vertex V : iSData.intrinsicMesh->vertices())
+    for (gcs::Vertex V : iSData.recoveredMesh->vertices())
     {
         // if (V.isDead()) { continue; }
         hdData.heat_sample_vertices.push_back(V.getIndex());
@@ -40,7 +40,6 @@ void build_heat_sample_indices(heatDiffData& hdData, const iSimpData& iSData)
 
 void diffuse_heat(heatDiffData& hdData, const double stepsize, const int steps)
 {
-    std::cout << "diffusing heat..." << std::endl;
     // TODO: guard check that Laplacian matrices already have been calculated in heatDiffData
     Eigen::MatrixXd A, B;
     A = hdData.M - stepsize * hdData.L;
@@ -52,6 +51,7 @@ void diffuse_heat(heatDiffData& hdData, const double stepsize, const int steps)
     {
         int vertex_idx = hdData.heat_sample_vertices[i];
         hdData.final_heat(i, 0) = hdData.initial_heat(vertex_idx);
+        // std::cout << "iteration " << i << " progress_percent: " << progress_percent << ", next_bar_percent: " << next_bar_percent << std::endl;
     }
     // printEigenMatrixXd("initial heat", hdData.final_heat);
 
@@ -67,14 +67,30 @@ void diffuse_heat(heatDiffData& hdData, const double stepsize, const int steps)
     // std::cout << "Vertex 383 mass: " << hdData.M(hdData.vertex_idcs_to_heat_idcs.at(383), hdData.vertex_idcs_to_heat_idcs.at(383)) << std::endl;
     // printEigenMatrixXd("vertex 383 laplacian row", hdData.L.row(hdData.vertex_idcs_to_heat_idcs.at(383)));
     // std::cout << "updated vertex 383 heat: " << get_heat(hdData, 383) << std::endl;
+    std::cout << "diffusing heat: [" << std::flush;
+    int total_bars = 24;
+    int current_bars = 0;
+    if(steps == 0) { for (int i=0; i<total_bars; i++) { std::cout << "#"; } }
+
     for (int i=0; i<steps; i++)
     {
         B = hdData.M * hdData.final_heat;
         hdData.final_heat = A.ldlt().solve(B);
-        // std::cout << "updated vertex 383 heat: " << get_heat(hdData, 383) << std::endl;
+
+        // progress bar
+        float progress_percent = ((float) i+1)/((float) steps);
+        float next_bar_percent = ((float) current_bars+1)/((float) total_bars);
+        // std::cout << "iteration " << i << " progress_percent: " << progress_percent << ", next_bar_percent: " << next_bar_percent << std::endl;
+        for (; progress_percent >= next_bar_percent;)
+        {
+            current_bars++;
+            next_bar_percent = ((float) current_bars+1)/((float) total_bars);
+            std::cout << "#" << std::flush;
+        }
     }
     // printEigenMatrixXd("final heat", hdData.final_heat);
     // std::cout << "Successfully diffused heat!" << std::endl;
+    std::cout << "]" << std::endl;
 }
 
 double get_heat(heatDiffData& hdData, const int vertex_idx)
@@ -93,7 +109,7 @@ void build_cotan_mass(heatDiffData& hdData, const iSimpData& iSData)
         // std::cout << "vertex " << i << " area mass: " << hdData.M(i, i) << std::endl;
     }
     // std::cout << "computed total area mass: " << total_mass(hdData) << std::endl;
-    std::cout << "Built cotan mass" << std::endl;
+    // std::cout << "Built cotan mass" << std::endl;
 }
 
 void build_cotan_laplacian(heatDiffData& hdData, const iSimpData& iSData)
@@ -105,7 +121,7 @@ void build_cotan_laplacian(heatDiffData& hdData, const iSimpData& iSData)
     {
         double vertex_weight = 0.0;
         int vertex_idx = hdData.heat_sample_vertices[i];
-        gcs::Vertex vi = iSData.intrinsicMesh->vertex(vertex_idx);
+        gcs::Vertex vi = iSData.recoveredMesh->vertex(vertex_idx);
         // std::cout << "Got vertex" << std::endl;
         for (gcs::Vertex vj : vi.adjacentVertices())
         {
@@ -114,7 +130,7 @@ void build_cotan_laplacian(heatDiffData& hdData, const iSimpData& iSData)
             if (vertex_idx == neighbor_idx) { std::cout << RED << "build_cotan_laplacian: Encountered self-edge!" << RESET << std::endl; exit(-1); }
 
             // std::cout << "Getting connecting edge idx... " << std::endl;
-            int edge_idx = iSData.intrinsicMesh->connectingEdge(vi, vj).getIndex();
+            int edge_idx = iSData.recoveredMesh->connectingEdge(vi, vj).getIndex();
             // std::cout << "Got connecting edge idx: " << edge_idx << std::endl;
             double edge_weight = cotan_weight(iSData, edge_idx);
             // std::cout << "Calculated cotan weight" << std::endl;
@@ -126,7 +142,7 @@ void build_cotan_laplacian(heatDiffData& hdData, const iSimpData& iSData)
         hdData.L(i, i) = -vertex_weight;
         // std::cout << "Calculated vertex: " << i << std::endl;
     }
-    std::cout << "Built cotan laplacian" << std::endl;
+    // std::cout << "Built cotan laplacian" << std::endl;
 }
 
 double barycentric_lumped_mass(const iSimpData& iSData, const int vertex_idx)
@@ -152,7 +168,7 @@ double barycentric_lumped_mass(const iSimpData& iSData, const int vertex_idx)
 double circumcentric_dual_mass(const iSimpData& iSData, const int vertex_idx)
 {
     double total_area = 0.0;
-    gcs::Vertex V = iSData.intrinsicMesh->vertex(vertex_idx);
+    gcs::Vertex V = iSData.recoveredMesh->vertex(vertex_idx);
     // double epsilon = std::numeric_limits<double>().epsilon();
     double epsilon = 0.000001;
 
@@ -165,9 +181,9 @@ double circumcentric_dual_mass(const iSimpData& iSData, const int vertex_idx)
         int e_ij = face_edges[0];
         int e_ik = face_edges[1];
         int e_jk = face_edges[2];
-        double l_ij = iSData.L(e_ij);
-        double l_ik = iSData.L(e_ik);
-        double l_jk = iSData.L(e_jk);
+        double l_ij = iSData.recovered_L(e_ij);
+        double l_ik = iSData.recovered_L(e_ik);
+        double l_jk = iSData.recovered_L(e_jk);
         double midpoint_l_ij = l_ij/2.0;
         double midpoint_l_ik = l_ik/2.0;
         // if (vertex_idx == 383) { std::cout << "Got edge-lengths: l_ij: " << l_ij << ", l_ik: " << l_ik << ", l_jk: " << l_jk << std::endl; }
@@ -291,7 +307,7 @@ double circumcentric_dual_mass(const iSimpData& iSData, const int vertex_idx)
 
 double cotan_weight(const iSimpData& iSData, const int edge_idx)
 {
-    gcs::Edge edge = iSData.intrinsicMesh->edge(edge_idx);
+    gcs::Edge edge = iSData.recoveredMesh->edge(edge_idx);
     double deg_epsilon = 0.000001*M_PI/180.0;
     double weight = 0.0;
 
@@ -316,12 +332,12 @@ double cotan_weight(const iSimpData& iSData, const int edge_idx)
     std::pair<int, int> Fl_unique = find_unique_vertex_index(Fl, edge);
     std::array<int, 5> edge_indices = order_quad_edge_indices(edge, Fk_unique.second, Fl_unique.second);
     // std::cout << "e_idxs: " << edge_indices[0] << ", " << edge_indices[1] << ", " << edge_indices[2] << ", " << edge_indices[3] << ", " << edge_indices[4] << std::endl;
-    double l_ij = iSData.L(edge_indices[0]);
+    double l_ij = iSData.recovered_L(edge_indices[0]);
 
     if (faces >= 1)
     {
-        double l_ik = iSData.L(edge_indices[1]);
-        double l_jk = iSData.L(edge_indices[2]);
+        double l_ik = iSData.recovered_L(edge_indices[1]);
+        double l_jk = iSData.recovered_L(edge_indices[2]);
         // std::cout << "Calling angle_i_from_lengths for alpha with: l_ij=" << l_ij << ", l_ik=" << l_ik << ", l_jk=" << l_jk << std::endl;
         // double alpha = angle_i_from_lengths(l_ij, l_ik, l_jk);
         double alpha = angle_i_from_lengths(l_ik, l_jk, l_ij);
@@ -351,8 +367,8 @@ double cotan_weight(const iSimpData& iSData, const int edge_idx)
 
     if (faces >= 2)
     {
-        double l_il = iSData.L(edge_indices[3]);
-        double l_jl = iSData.L(edge_indices[4]);
+        double l_il = iSData.recovered_L(edge_indices[3]);
+        double l_jl = iSData.recovered_L(edge_indices[4]);
         // std::cout << "Calling angle_i_from_lengths for beta with: l_ij=" << l_ij << ", l_il=" << l_il << ", l_jl=" << l_jl << std::endl;
         // double beta = angle_i_from_lengths(l_ij, l_il, l_jl);
         double beta = angle_i_from_lengths(l_il, l_jl, l_ij);

@@ -30,6 +30,11 @@ void rotate_reference_edge(iSimpData& iSData, const gcs::Vertex& vertex);
 PolarVector2D next_error_vector(const iSimpData& iSData, const double alpha, const gcs::Vertex vertex, const gcs::Vertex neighbor, bool for_T_minus);
 double intrinsic_curvature_error(const iSimpData& iSData, const gcs::Vertex vertex);
 
+// replay operations for intrinsics recovery after initial simplification
+void replay_intrinsic_flip(iSimpData& iSData, const int edge_idx);
+void replay_vertex_flattening(iSimpData& iSData, const int vertex_idx);
+void replay_vertex_removal(iSimpData& iSData, const int vertex_idx);
+
 std::array<int, 3> order_triangle_vertex_indices(const gcs::Face& face, const int F_first_v);
 std::array<int, 3> order_triangle_edge_indices(const gcs::Face& face, const int F_first_v);
 

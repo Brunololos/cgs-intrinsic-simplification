@@ -25,22 +25,25 @@ void initMesh(const Eigen::Matrix<double, -1, 3>& V, const Eigen::Matrix<int, -1
 
   // initialize intrinsic connectivity
   data.intrinsicMesh.reset(new gcs::ManifoldSurfaceMesh(F));
+  data.recoveredMesh.reset(new gcs::ManifoldSurfaceMesh(F));
   data.tangent_space_reference_edges = Eigen::MatrixXi::Zero(V.rows(), 1);
 
   // initialize intrinsic edge lengths
   int nEdges = data.intrinsicMesh->nEdges();
-  data.L = Eigen::VectorXd::Zero(nEdges);
+  data.inputL = Eigen::VectorXd::Zero(nEdges);
   int i = 0;
   // std::cout << "Calculating L:\n" << std::endl; // TODO: remove
   for (gcs::Edge e : data.inputMesh->edges())
   {
-    data.L(e.getIndex()) = data.inputGeometry->edgeLength(e);
+    data.inputL(e.getIndex()) = data.inputGeometry->edgeLength(e);
     // /* TODO: remove */ std::cout << "edge(" << e.firstVertex().getIndex() << ", " << e.secondVertex().getIndex() << ") L(" << i << ") = " << data.L(i) << std::endl;
-    if(data.L(e.getIndex()) == 0.0) {
-      std::cout << RED << "edge(" << e.firstVertex().getIndex() << ", " << e.secondVertex().getIndex() << ") L(" << i << ") = " << data.L(i) << RESET << std::endl;
+    if(data.inputL(e.getIndex()) == 0.0) {
+      std::cout << RED << "edge(" << e.firstVertex().getIndex() << ", " << e.secondVertex().getIndex() << ") L(" << i << ") = " << data.inputL(i) << RESET << std::endl;
     }
     i++;
   }
+  data.L = data.inputL;
+  data.recovered_L = data.inputL;
   bool result = validate_intrinsic_edge_lengths(data);
   if (!result) { std::cout << "occurred in iSData initialization " << std::endl; }
 
@@ -208,5 +211,29 @@ bool iSimp_step(iSimpData& data)
     data.Q_elems[vertex_idx].second = INFINITY;
     data.Q.insert(std::make_shared<std::pair<int, double>>(data.Q_elems[vertex_idx]));
     return false;
+  }
+}
+
+void recover_intrinsics_at(const int mapping_idx, iSimpData& data)
+{
+  data.recoveredMesh.reset(new gcs::ManifoldSurfaceMesh(data.F));
+  data.recovered_L = data.inputL;
+
+  // replay simplification operations
+  for(int i=0; i<mapping_idx; i++)
+  {
+    switch(data.mapping[i]->op_type)
+    {
+      default:
+      case SIMP_OP::E_FLIP:
+        replay_intrinsic_flip(data, data.mapping[i]->reduced_primitive_idx());
+        break;
+      case SIMP_OP::V_FLATTEN:
+        replay_vertex_flattening(data, data.mapping[i]->reduced_primitive_idx());
+        break;
+      case SIMP_OP::V_REMOVAL:
+        replay_vertex_removal(data, data.mapping[i]->reduced_primitive_idx());
+        break;
+    }
   }
 }
