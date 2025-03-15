@@ -220,7 +220,7 @@ void recover_intrinsics_at(const int mapping_idx, iSimpData& data)
   data.recovered_L = data.inputL;
 
   // replay simplification operations
-  for(int i=0; i<mapping_idx; i++)
+  for(int i=0; i<=mapping_idx; i++)
   {
     switch(data.mapping[i]->op_type)
     {
