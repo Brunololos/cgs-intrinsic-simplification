@@ -60,8 +60,8 @@ int main(int argc, char *argv[])
   std::vector<int> simp_step_mapping_indices;
 
   MatrixXuc R, G, B, A;
-  int TEXTURE_WIDTH = 2000;
-  int TEXTURE_HEIGHT = 2000;
+  int TEXTURE_WIDTH = 50;// 2000;
+  int TEXTURE_HEIGHT = 50; //2000;
   std::vector<unsigned char> ps_triang_texture = std::vector<unsigned char>();
   std::vector<unsigned char> ps_heat_texture = std::vector<unsigned char>();
   polyscope::SurfaceCornerParameterizationQuantity* q = nullptr;
@@ -85,7 +85,7 @@ int main(int argc, char *argv[])
   mapped_points_snapshots = std::vector<std::vector<BarycentricPoint>>();
   snapshot_mapping_indices = std::vector<int>();
   simp_step_mapping_indices = std::vector<int>();
-  int snapshot_interval = 250;
+  int snapshot_interval = 50;
   bool do_texture_update = false;
 
   // modified vertices & faces
@@ -406,6 +406,7 @@ int main(int argc, char *argv[])
   const auto &update_heat_texture = [&]()
   {
     int num_triangles = iSData.mapped_by_triangle.size();
+    // if(coarsen_to_n_vertices == 4) { std::cout << "mapped_by_triangle.size(): " << iSData.mapped_by_triangle.size() << std::endl; }
 
     // draw texture
     for (int i = 0; i < num_triangles; i++)
@@ -414,9 +415,11 @@ int main(int argc, char *argv[])
       // int v2_idx = F_snapshots[snapshot_idx][i][1];
       // int v3_idx = F_snapshots[snapshot_idx][i][2];
       // if (v1_idx == -1 || v2_idx == -1 || v3_idx == -1) { continue; }
+      // if(iSData.recoveredMesh->nVertices() == 4 && i < 7) { std::cout << "Checking if face " << i << " is dead..." << std::endl; }
       if (iSData.recoveredMesh->face(i).isDead()) { continue; }
       int v1_idx, v2_idx, v3_idx;
       int k = 0;
+      // if(coarsen_to_n_vertices == 4) { std::cout << "Getting vertices of face: " << i << "..." << std::endl; }
       for (gcs::Vertex V : iSData.recoveredMesh->face(i).adjacentVertices())
       {
         if (k==0) { v1_idx = V.getIndex(); }
@@ -424,6 +427,7 @@ int main(int argc, char *argv[])
         else if (k==2) { v3_idx = V.getIndex(); }
         k++;
       }
+      // if(coarsen_to_n_vertices == 4) { std::cout << "Determined face: " << i << " as {" << v1_idx << ", " << v2_idx << ", " << v3_idx << "}" << std::endl; }
       // std::cout << "coloring face: " << i << std::endl;
       // double heat1 = hdData.final_heat[v1_idx];
       // double heat2 = hdData.final_heat[v2_idx];
@@ -431,6 +435,9 @@ int main(int argc, char *argv[])
       double heat1 = get_heat(hdData, v1_idx);
       double heat2 = get_heat(hdData, v2_idx);
       double heat3 = get_heat(hdData, v3_idx);
+      // if(coarsen_to_n_vertices == 4) { std::cout << "Got vertex: " << v1_idx << " heat: " << heat1 << std::endl; }
+      // if(coarsen_to_n_vertices == 4) { std::cout << "Got vertex: " << v2_idx << " heat: " << heat2 << std::endl; }
+      // if(coarsen_to_n_vertices == 4) { std::cout << "Got vertex: " << v3_idx << " heat: " << heat3 << std::endl; }
       if (heat1 > 1.0) { std::cout << "encountered excessive heat: " << heat1 << std::endl; }
       if (heat2 > 1.0) { std::cout << "encountered excessive heat: " << heat2 << std::endl; }
       if (heat3 > 1.0) { std::cout << "encountered excessive heat: " << heat3 << std::endl; }
@@ -576,6 +583,100 @@ int main(int argc, char *argv[])
     {
         diffuse_over_n_steps = std::max(diffuse_over_n_steps - 1, 0);
         do_texture_update = true;
+    }
+    ImGui::Dummy(ImVec2(0.0f, 10.0f));
+    ImGui::Text("Debug");
+    ImGui::Separator();
+    if (ImGui::Button("Print intrinsic triangulation"))
+    {
+      std::cout << "Remaining intrinsic triangles:" << std::endl;
+        // assuming recoveredMesh ist recovered and consistent with mapped points
+      for (gcs::Face F : iSData.recoveredMesh->faces())
+      {
+        std::cout << "> Triangle " << F.getIndex() << ": {";
+        bool first = true;
+        for (gcs::Vertex V : F.adjacentVertices())
+        {
+          if (!first) { std::cout << ", "; }
+          std::cout << V.getIndex();
+          first = false;
+        }
+        std::cout << "}:" << std::endl;
+      }
+    }
+    if (ImGui::Button("Print tracked points"))
+    {
+      std::cout << "Tracked points by triangle:" << std::endl;
+      for (int i=0; i<iSData.tracked_by_triangle.size(); i++)
+      {
+        if (iSData.tracked_by_triangle[i].size() <= 0) { continue; }
+        // assuming recoveredMesh ist recovered and consistent with mapped points
+        gcs::Face F = iSData.inputMesh->face(i);
+        std::cout << "> Triangle " << i << ": {";
+        bool first = true;
+        for (gcs::Vertex V : F.adjacentVertices())
+        {
+          if (!first) { std::cout << ", "; }
+          std::cout << V.getIndex();
+          first = false;
+        }
+        std::cout << "}:" << std::endl;
+
+        for(int j=0; j<iSData.tracked_by_triangle[i].size(); j++)
+        {
+          BarycentricPoint bp = iSData.tracked_points[iSData.tracked_by_triangle[i][j]];
+          std::cout << "  > Barycentric Point: {" << bp[0] << ", " << bp[1] << ", " << bp[2] << "}" << std::endl;
+        }
+      }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Print mapped points"))
+    {
+      std::cout << "Mapped points by triangle:" << std::endl;
+      for (int i=0; i<iSData.mapped_by_triangle.size(); i++)
+      {
+        if (iSData.mapped_by_triangle[i].size() <= 0) { continue; }
+        // assuming recoveredMesh ist recovered and consistent with mapped points
+        gcs::Face F = iSData.recoveredMesh->face(i);
+        std::cout << "> Triangle " << i << ": {";
+        bool first = true;
+        for (gcs::Vertex V : F.adjacentVertices())
+        {
+          if (!first) { std::cout << ", "; }
+          std::cout << V.getIndex();
+          first = false;
+        }
+        std::cout << "}:" << std::endl;
+
+        for(int j=0; j<iSData.mapped_by_triangle[i].size(); j++)
+        {
+          BarycentricPoint bp = iSData.mapped_points[iSData.mapped_by_triangle[i][j]];
+          std::cout << "  > Barycentric Point: {" << bp[0] << ", " << bp[1] << ", " << bp[2] << "}" << std::endl;
+        }
+      }
+    }
+    if (ImGui::Button("Print initial heat"))
+    {
+      std::cout << "Initial heat by vertex:" << std::endl;
+      for (int i=0; i<hdData.final_heat.size(); i++)
+      {
+        // assuming recoveredMesh ist recovered and consistent with mapped points
+        gcs::Face F = iSData.recoveredMesh->face(i);
+        int vertex_idx = hdData.heat_sample_vertices[i];
+        std::cout << "> Vertex " << vertex_idx << " heat: " << hdData.initial_heat[vertex_idx] << std::endl;
+      }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Print heat"))
+    {
+      std::cout << "Current heat by vertex:" << std::endl;
+      for (int i=0; i<hdData.final_heat.size(); i++)
+      {
+        // assuming recoveredMesh ist recovered and consistent with mapped points
+        gcs::Face F = iSData.recoveredMesh->face(i);
+        int vertex_idx = hdData.heat_sample_vertices[i];
+        std::cout << "> Vertex " << vertex_idx << " heat: " << hdData.final_heat[i] << std::endl;
+      }
     }
     if (do_texture_update)
     {
