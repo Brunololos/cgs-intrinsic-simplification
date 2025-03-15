@@ -59,18 +59,6 @@ int main(int argc, char *argv[])
   std::vector<int> snapshot_mapping_indices;
   std::vector<int> simp_step_mapping_indices;
 
-  // NOTE: Im unhappy about the face snapshots. I maneuvered myself into an inefficient place.
-  // F_snapshots is only needed for getting the vertices of faces in partially reduced
-  // intrinsic triangulations for the interpolation of the heat values resulting from
-  // heat diffusion for the texture mapping of the heat diffusion results.
-  // I didn't expect to need them... Probably one could try to derive them from the simplification
-  // mapping, but this is the simple and crude solution for now.
-  std::vector<std::vector<std::array<int, 3>>> F_snapshots;
-  std::vector<std::vector<int>> heat_sample_indices_snapshots;
-  std::vector<std::unordered_map<int, int>> vertex_idcs_to_heat_idcs_snapshots;
-  std::vector<Eigen::MatrixXd> laplacian_mass_snapshots;
-  std::vector<Eigen::MatrixXd> laplacian_snapshots;
-
   MatrixXuc R, G, B, A;
   int TEXTURE_WIDTH = 2000;
   int TEXTURE_HEIGHT = 2000;
@@ -95,14 +83,9 @@ int main(int argc, char *argv[])
   colorings = std::vector<Eigen::VectorXi>();
   mapped_by_triangle_snapshots = std::vector<std::vector<std::vector<int>>>();
   mapped_points_snapshots = std::vector<std::vector<BarycentricPoint>>();
-  F_snapshots = std::vector<std::vector<std::array<int, 3>>>();
-  heat_sample_indices_snapshots = std::vector<std::vector<int>>();
-  vertex_idcs_to_heat_idcs_snapshots = std::vector<std::unordered_map<int, int>>();
-  laplacian_mass_snapshots = std::vector<Eigen::MatrixXd>();
-  laplacian_snapshots = std::vector<Eigen::MatrixXd>();
   snapshot_mapping_indices = std::vector<int>();
   simp_step_mapping_indices = std::vector<int>();
-  int snapshot_interval = 100;
+  int snapshot_interval = 250;
   bool do_texture_update = false;
 
   // modified vertices & faces
@@ -602,14 +585,6 @@ int main(int argc, char *argv[])
       iSData.mapped_by_triangle = mapped_by_triangle_snapshots.at(snapshot_idx);
       iSData.mapped_points = mapped_points_snapshots.at(snapshot_idx);
 
-      // small heat diff texturing insertion
-      // hdData.heat_sample_vertices = heat_sample_indices_snapshots[snapshot_idx];
-      // hdData.vertex_idcs_to_heat_idcs = vertex_idcs_to_heat_idcs_snapshots[snapshot_idx];
-      // hdData.M = laplacian_mass_snapshots[snapshot_idx];
-      // hdData.L = laplacian_snapshots[snapshot_idx];
-      // diffuse_heat(hdData, diffusion_stepsize, diffuse_over_n_steps);
-      // update_heat_texture(snapshot_idx);
-
       int snapshot_mapping_idx = snapshot_mapping_indices.at(snapshot_idx);
       // std::cout << "Coarsening from: " << coarsen_from_n_vertices << " to " << coarsen_to_n_vertices << std::endl;
       // map_current_from_to(iSData, coarsen_from_n_vertices, coarsen_to_n_vertices);
@@ -667,11 +642,6 @@ int main(int argc, char *argv[])
   map_registered(iSData);
   mapped_by_triangle_snapshots.push_back(iSData.mapped_by_triangle);
   mapped_points_snapshots.push_back(iSData.mapped_points);
-  // F_snapshots.push_back(build_F_snapshot(iSData));
-  // heat_sample_indices_snapshots.push_back(hdData.heat_sample_vertices);
-  // vertex_idcs_to_heat_idcs_snapshots.push_back(hdData.vertex_idcs_to_heat_idcs);
-  // laplacian_mass_snapshots.push_back(hdData.M);
-  // laplacian_snapshots.push_back(hdData.L);
   snapshot_mapping_indices.push_back(0);
   simp_step_mapping_indices.push_back(0);
   // std::cout << "write_success: " << igl::png::writePNG(R, G, B, A, "H:/GIT/cgs-intrinsic-simplification/textures/object_texture.png") << std::endl;
@@ -712,15 +682,6 @@ int main(int argc, char *argv[])
       mapped_by_triangle_snapshots.push_back(iSData.mapped_by_triangle);
       mapped_points_snapshots.push_back(iSData.mapped_points);
 
-      // snapshot laplacian for heat diffusion
-      // build_heat_sample_indices(hdData, iSData);
-      // build_cotan_mass(hdData, iSData);
-      // build_cotan_laplacian(hdData, iSData);
-      // F_snapshots.push_back(build_F_snapshot(iSData));
-      // heat_sample_indices_snapshots.push_back(hdData.heat_sample_vertices);
-      // vertex_idcs_to_heat_idcs_snapshots.push_back(hdData.vertex_idcs_to_heat_idcs);
-      // laplacian_mass_snapshots.push_back(hdData.M);
-      // laplacian_snapshots.push_back(hdData.L);
       snapshot_mapping_indices.push_back(iSData.mapping.size());
     }
     compute_coloring();
