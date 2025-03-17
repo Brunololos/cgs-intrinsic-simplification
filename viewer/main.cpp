@@ -60,8 +60,8 @@ int main(int argc, char *argv[])
   std::vector<int> simp_step_mapping_indices;
 
   MatrixXuc R, G, B, A;
-  int TEXTURE_WIDTH = 50;// 2000;
-  int TEXTURE_HEIGHT = 50; //2000;
+  int TEXTURE_WIDTH = 1000;// 2000;
+  int TEXTURE_HEIGHT = 1000; //2000;
   std::vector<unsigned char> ps_triang_texture = std::vector<unsigned char>();
   std::vector<unsigned char> ps_heat_texture = std::vector<unsigned char>();
   polyscope::SurfaceCornerParameterizationQuantity* q = nullptr;
@@ -335,22 +335,35 @@ int main(int argc, char *argv[])
     for (int i = 0; i < iSData.inputMesh->nFaces(); i++)
     {
       // Determine color
-      int color_idx = (i % (num_colors - 1)) + 1;
+      int seeded_color_idx = (i % (num_colors - 1));
       gcs::Face current_face = iSData.intrinsicMesh->face(i);
       if (current_face.isDead()) { continue; }
-      int max_color_idx = 0;
-      for(gcs::Face neighbor : current_face.adjacentFaces())
+
+      int color_idx = 0;
+      for (int j=0; j<num_colors-1; j++)
       {
-        int neighbor_idx = neighbor.getIndex();
-        // std::cout << "Checking neighbor face: " << neighbor_idx << std::endl;
-        int neighbor_color_idx = Coloring(neighbor_idx);
-        if (neighbor_color_idx > max_color_idx) { max_color_idx = neighbor_color_idx; }
-        if (color_idx == neighbor_color_idx)
+        bool valid = true;
+        int current_color_idx = ((seeded_color_idx + j) % (num_colors - 1)) + 1;
+        for(gcs::Face neighbor : current_face.adjacentFaces())
+        // for(gcs::Edge edge : current_face.adjacentVertices())
         {
-          color_idx = max_color_idx + 1;
+          int neighbor_idx = neighbor.getIndex();
+          // for (gcs::Face neighbor : edge.adjacentFaces())
+          // {
+          //   if (neighbor.getIndex() != current_face.getIndex()) { neighbor_idx = neighbor.getIndex(); break; }
+          // }
+
+          // std::cout << "Checking neighbor face: " << neighbor_idx << std::endl;
+          int neighbor_color_idx = Coloring(neighbor_idx);
+          if (current_color_idx == neighbor_color_idx)
+          {
+            valid = false;
+            break;
+          }
         }
+        if (valid) { color_idx = current_color_idx; break; }
       }
-      if (color_idx >= num_colors) { color_idx = 0; }
+
       Coloring(i) = color_idx;
       // std::cout << "Setting coloring index: " << color_idx << std::endl;
     }
@@ -399,8 +412,6 @@ int main(int argc, char *argv[])
         // std::cout << "Setting texcoord: (" << texcoord[0] << ", " << texcoord[1] << "): R=" << CM(i%9, 0) << ", G=" << CM(i%9, 1) << ", B=" << CM(i%9, 2) << std::endl;
       }
     }
-    // viewer.data().set_texture(R, G, B);
-    // std::cout << "write_success: " << igl::png::writePNG(R, G, B, A, "H:/GIT/cgs-intrinsic-simplification/textures/object_texture.png") << std::endl;
   };
 
   const auto &update_heat_texture = [&]()
@@ -547,15 +558,15 @@ int main(int argc, char *argv[])
     {
       do_texture_update = true;
     }
-    if (ImGui::Button("Remove Vertex"))
-    {
-        coarsen_to_n_vertices = std::max(std::min(coarsen_to_n_vertices - 1, (int) iSData.inputMesh->nVertices()), min_n_vertices);
-        do_texture_update = true;
-    }
-    ImGui::SameLine();
     if (ImGui::Button("Add Vertex"))
     {
         coarsen_to_n_vertices = std::max(std::min(coarsen_to_n_vertices + 1, (int) iSData.inputMesh->nVertices()), min_n_vertices);
+        do_texture_update = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Remove Vertex"))
+    {
+        coarsen_to_n_vertices = std::max(std::min(coarsen_to_n_vertices - 1, (int) iSData.inputMesh->nVertices()), min_n_vertices);
         do_texture_update = true;
     }
     ImGui::Dummy(ImVec2(0.0f, 10.0f));
@@ -601,7 +612,15 @@ int main(int argc, char *argv[])
           std::cout << V.getIndex();
           first = false;
         }
-        std::cout << "}:" << std::endl;
+        std::cout << "},      N: {";
+        first = true;
+        for (gcs::Face NF : F.adjacentFaces())
+        {
+          if (!first) { std::cout << ", "; }
+          std::cout << NF.getIndex();
+          if (first) { first = false; }
+        }
+        std::cout << "}" << std::endl;
       }
     }
     if (ImGui::Button("Print tracked points"))
@@ -774,7 +793,7 @@ int main(int argc, char *argv[])
     bool success = iSimp_step(iSData);
     // if case, because the iSimp step can fail & not introduce any new simplification operations
     // if(iSData.mapping.size() > step_mapping_idx) { simp_step_mapping_indices.push_back(step_mapping_idx); }
-    if(success) { simp_step_mapping_indices.push_back(step_mapping_idx); }
+    if(success) { simp_step_mapping_indices.push_back(step_mapping_idx); compute_coloring(); }
     if ((iSData.inputMesh->nVertices() - iSData.intrinsicMesh->nVertices()) % snapshot_interval == 0) {
       std::cout << "Took snapshot at " << iSData.inputMesh->nVertices() - iSData.intrinsicMesh->nVertices() << " removed vertices" << std::endl;
 
@@ -785,7 +804,7 @@ int main(int argc, char *argv[])
 
       snapshot_mapping_indices.push_back(iSData.mapping.size());
     }
-    compute_coloring();
+    // compute_coloring();
     // TODO: remove after debugging
     // bool are_edge_lengths_valid = validate_intrinsic_edge_lengths(iSData);
     // if(!are_edge_lengths_valid) {
