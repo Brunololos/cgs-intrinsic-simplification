@@ -136,6 +136,9 @@ bool flip_intrinsic(iSimpData& iSData, const gcs::Edge edge)
 
   std::pair<int, int> Fk_unique = find_unique_vertex_index(Fk, edge);
   std::pair<int, int> Fl_unique = find_unique_vertex_index(Fl, edge);
+
+  // prevent flipping into self-edges
+  if (Fk_unique.second == Fl_unique.second) { return false; }
   // get ordered intrinsic edge lengths from neighborhood
   std::array<int, 5> edge_indices = order_quad_edge_indices(edge, Fk_unique.second, Fl_unique.second);
   std::array<int, 4> vertex_indices = order_quad_vertex_indices(edge, Fk_unique.second, Fl_unique.second);
@@ -167,6 +170,7 @@ bool flatten_vertex(iSimpData& iSData, const int vertex_idx)
 {
   // std::cout << "flatten_vertex: " << std::endl;
   gcs::Vertex v = iSData.intrinsicMesh->vertex(vertex_idx);
+  int backtracking_iterations = 10;
   double threshold = 0.0001;
 
   // check if vertex is interior or boundary vertex
@@ -181,16 +185,18 @@ bool flatten_vertex(iSimpData& iSData, const int vertex_idx)
     L_opt.insert({idx, iSData.L[idx]});
   }
 
-  if (L_opt.size() == 2) { std::cout << dye("Found 2-face vertex during flattening!", RED) << std::endl; }
+  if (L_opt.size() == 2) { std::cout << dye("Found 2-face vertex during flattening!", RED) << std::endl; return false; }
   for (gcs::Face F : v.adjacentFaces()) {
     for (gcs::Face neighbor : F.adjacentFaces())
     {
       if (F.getIndex() == neighbor.getIndex()) {
         std::cout << dye("Found self-face during flattening!", RED) << std::endl;
+        return false;
       }
     }
   }
 
+  // step size 1000.0 for shock value. It is overridden in each iteration anyways.
   double step = 1000.0;
   int i = 0;
   while (std::abs(step) > threshold)
@@ -198,6 +204,7 @@ bool flatten_vertex(iSimpData& iSData, const int vertex_idx)
     // Calculate newton step
     double enumerator = THETA_HAT;
     double denominator = 0.0;
+    double step_size = 1.0;
     for (gcs::Face F : v.adjacentFaces())
     {
       // get edge lengths
@@ -206,29 +213,64 @@ bool flatten_vertex(iSimpData& iSData, const int vertex_idx)
       double l_ik = L_opt[edge_indices[1]];
       double l_jk = iSData.L[edge_indices[2]];
 
+      // calculate angles
       if (l_jk < 0.0000000001) { std::cout << "flatten_vertex: Calling angle_i with zero length" << std::endl; }
       enumerator -= angle_i_from_lengths(l_ij, l_ik, l_jk);
       if (l_ij < 0.0000000001) { std::cout << "flatten_vertex: Calling angle_i with zero length" << std::endl; }
       double theta_ij = angle_i_from_lengths(l_ik, l_jk, l_ij);
       if (l_ik < 0.0000000001) { std::cout << "flatten_vertex: Calling angle_i with zero length" << std::endl; }
       double theta_ik = angle_i_from_lengths(l_ij, l_jk, l_ik);
-      denominator += 1.0/std::tan(theta_ij);
-      denominator += 1.0/std::tan(theta_ik);
-    }
-    denominator /= 2.0;
 
+      // calculate hessian
+      if (theta_ij <= 0.0 || theta_ij >= M_PI) { denominator += 0.0; }
+      else { denominator += 1.0/std::tan(theta_ij); }
+      if (theta_ik <= 0.0 || theta_ik >= M_PI) { denominator += 0.0; }
+      else { denominator += 1.0/std::tan(theta_ik); }
+    }
+
+    denominator /= 2.0;
     step = enumerator / denominator;
-    u_i = u_i - step;
+
+    // Backtracking
+    bool found_valid_step = false;
+    for (int i=0; i<backtracking_iterations; i++)
+    {
+      // update edge lengths in L_opt with the next u_i as a parameter
+      for (const auto& pair : L_opt)
+      {
+        L_opt[pair.first] = std::exp((u_i - step_size*step) / 2.0) * iSData.L[pair.first];
+        // gcs::Edge E = iSData.intrinsicMesh->edge(pair.first);
+        // std::cout << "  (" << pair.first << ": (" << E.firstVertex().getIndex() << ", " << E.secondVertex().getIndex() << ")" << ", " << L_opt[pair.first] << ")" << std::endl;
+      }
+
+      // validate the result
+      bool is_valid = true;
+      for (gcs::Face F : v.adjacentFaces())
+      {
+        // get edge lengths
+        std::array<int, 3> edge_indices = order_triangle_edge_indices(F, vertex_idx);
+        double l_ij = L_opt[edge_indices[0]];
+        double l_ik = L_opt[edge_indices[1]];
+        double l_jk = iSData.L[edge_indices[2]];
+        if (!satisfies_triangle_ineq(l_ij, l_ik, l_jk))
+        {
+          is_valid = false;
+          break;
+        }
+      }
+      if (!is_valid)
+      {
+        step_size = 0.5 * step_size;
+      } else {
+        found_valid_step = true;
+        u_i = u_i - step;
+        break;
+      }
+    }
+    if (!found_valid_step) { return false; }
 
     // safety check for NaN
     if (u_i != u_i) { std::cout << dye("Encountered NaN!", RED) << std::endl; return false; }
-    // update edge lengths in L_opt with u_i as a parameter
-    for (const auto& pair : L_opt)
-    {
-      L_opt[pair.first] = std::exp(u_i / 2.0) * iSData.L[pair.first];
-      gcs::Edge E = iSData.intrinsicMesh->edge(pair.first);
-      // std::cout << "  (" << pair.first << ": (" << E.firstVertex().getIndex() << ", " << E.secondVertex().getIndex() << ")" << ", " << L_opt[pair.first] << ")" << std::endl;
-    }
     i++;
   }
 
@@ -245,9 +287,7 @@ bool flatten_vertex(iSimpData& iSData, const int vertex_idx)
     double l_ik = L_opt[edge_indices[1]];
     double l_jk = iSData.L[edge_indices[2]];
 
-    if ((l_ij > l_ik + l_jk + eps)
-    ||  (l_ik > l_ij + l_jk + eps)
-    ||  (l_jk > l_ij + l_ik + eps))
+    if (!satisfies_triangle_ineq(l_ij, l_ik, l_jk))
     {
       // TODO: perform edge flips to try to mitigate it
       std::cout << dye("Violated triangle inequality", RED) << std::endl;
@@ -538,48 +578,11 @@ void flip_to_delaunay(iSimpData& iSData)
     double theta_k = angle_i_from_lengths(l_ik, l_jk, l_ij);
     if (l_ij < 0.0000000001) { std::cout << "flip_to_delaunay: Calling angle_i with zero length" << std::endl; }
     double theta_l = angle_i_from_lengths(l_il, l_jl, l_ij);
-    if(theta_k + theta_l > M_PI)
+    if(theta_k + theta_l > M_PI + 0.000001)
     {
       flip_intrinsic(iSData, E);
     }
   }
-
-  // bool found_flip = true;
-  // while(found_flip)
-  // {
-  //   found_flip = false;
-  //   for (gcs::Edge E : iSData.intrinsicMesh->edges())
-  //   {
-  //     if(E.isBoundary()) { continue; }
-  //     gcs::Face Fk;
-  //     gcs::Face Fl;
-  //     bool t = true;
-  //     for (gcs::Face F : E.adjacentFaces())
-  //     {
-  //       if (t) {
-  //         Fk = F;
-  //         t = false;
-  //       } else {
-  //         Fl = F;
-  //       }
-  //     }
-  //     std::pair<int, int> Fk_unique = find_unique_vertex_index(Fk, E);
-  //     std::pair<int, int> Fl_unique = find_unique_vertex_index(Fl, E);
-  //     std::array<int, 5> edge_indices = order_quad_edge_indices(E, Fk_unique.second, Fl_unique.second);
-  //     double l_ij = iSData.L(edge_indices[0]);
-  //     double l_ik = iSData.L(edge_indices[1]);
-  //     double l_jk = iSData.L(edge_indices[2]);
-  //     double l_il = iSData.L(edge_indices[3]);
-  //     double l_jl = iSData.L(edge_indices[4]);
-  //     double theta_k = angle_i_from_lengths(l_ik, l_jk, l_ij);
-  //     double theta_l = angle_i_from_lengths(l_il, l_jl, l_ij);
-  //     if(theta_k + theta_l > M_PI)
-  //     {
-  //       found_flip = flip_intrinsic(iSData, E);
-  //       if (found_flip) { break; }
-  //     }
-  //   }
-  // }
 }
 
 bool flip_vertex_to_deg3(iSimpData& iSData, const int vertex_idx)
@@ -895,6 +898,8 @@ void replay_intrinsic_flip(iSimpData& iSData, const int edge_idx)
 
   std::pair<int, int> Fk_unique = find_unique_vertex_index(Fk, edge);
   std::pair<int, int> Fl_unique = find_unique_vertex_index(Fl, edge);
+  // prevent flipping into self-edges
+  if (Fk_unique.second == Fl_unique.second) { return exit(-1); }
   // get ordered intrinsic edge lengths from neighborhood
   std::array<int, 5> edge_indices = order_quad_edge_indices(edge, Fk_unique.second, Fl_unique.second);
   std::array<int, 4> vertex_indices = order_quad_vertex_indices(edge, Fk_unique.second, Fl_unique.second);
@@ -917,6 +922,7 @@ void replay_intrinsic_flip(iSimpData& iSData, const int edge_idx)
 void replay_vertex_flattening(iSimpData& iSData, const int vertex_idx)
 {
   gcs::Vertex v = iSData.recoveredMesh->vertex(vertex_idx);
+  int backtracking_iterations = 10;
   double threshold = 0.0001;
 
   // check if vertex is interior or boundary vertex
@@ -931,17 +937,19 @@ void replay_vertex_flattening(iSimpData& iSData, const int vertex_idx)
     L_opt.insert({idx, iSData.recovered_L[idx]});
   }
 
-  if (L_opt.size() == 2) { std::cout << dye("replay_vertex_flattening: Found 2-face vertex during flattening!", RED) << std::endl; }
+  if (L_opt.size() == 2) { std::cout << dye("replay_vertex_flattening: Found 2-face vertex during flattening!", RED) << std::endl; exit(-1); }
   for (gcs::Face F : v.adjacentFaces()) {
     for (gcs::Face neighbor : F.adjacentFaces())
     {
       if (F.getIndex() == neighbor.getIndex()) {
         std::cout << dye("replay_vertex_flattening: Found self-face during flattening!", RED) << std::endl;
         exit(-1);
+        // return;
       }
     }
   }
 
+  // step size 1000.0 for shock value. It is overridden in each iteration anyways.
   double step = 1000.0;
   int i = 0;
   while (std::abs(step) > threshold)
@@ -949,6 +957,7 @@ void replay_vertex_flattening(iSimpData& iSData, const int vertex_idx)
     // Calculate newton step
     double enumerator = THETA_HAT;
     double denominator = 0.0;
+    double step_size = 1.0;
     for (gcs::Face F : v.adjacentFaces())
     {
       // get edge lengths
@@ -957,29 +966,64 @@ void replay_vertex_flattening(iSimpData& iSData, const int vertex_idx)
       double l_ik = L_opt[edge_indices[1]];
       double l_jk = iSData.recovered_L[edge_indices[2]];
 
+      // calculate angles
       if (l_jk < 0.0000000001) { std::cout << "replay_vertex_flattening: Calling angle_i with zero length" << std::endl; }
       enumerator -= angle_i_from_lengths(l_ij, l_ik, l_jk);
       if (l_ij < 0.0000000001) { std::cout << "replay_vertex_flattening: Calling angle_i with zero length" << std::endl; }
       double theta_ij = angle_i_from_lengths(l_ik, l_jk, l_ij);
       if (l_ik < 0.0000000001) { std::cout << "replay_vertex_flattening: Calling angle_i with zero length" << std::endl; }
       double theta_ik = angle_i_from_lengths(l_ij, l_jk, l_ik);
-      denominator += 1.0/std::tan(theta_ij);
-      denominator += 1.0/std::tan(theta_ik);
-    }
-    denominator /= 2.0;
 
+      // calculate hessian
+      if (theta_ij <= 0.0 || theta_ij >= M_PI) { denominator += 0.0; }
+      else { denominator += 1.0/std::tan(theta_ij); }
+      if (theta_ik <= 0.0 || theta_ik >= M_PI) { denominator += 0.0; }
+      else { denominator += 1.0/std::tan(theta_ik); }
+    }
+
+    denominator /= 2.0;
     step = enumerator / denominator;
-    u_i = u_i - step;
+
+    // Backtracking
+    bool found_valid_step = false;
+    for (int i=0; i<backtracking_iterations; i++)
+    {
+      // update edge lengths in L_opt with the next u_i as a parameter
+      for (const auto& pair : L_opt)
+      {
+        L_opt[pair.first] = std::exp((u_i - step_size*step) / 2.0) * iSData.recovered_L[pair.first];
+        // gcs::Edge E = iSData.intrinsicMesh->edge(pair.first);
+        // std::cout << "  (" << pair.first << ": (" << E.firstVertex().getIndex() << ", " << E.secondVertex().getIndex() << ")" << ", " << L_opt[pair.first] << ")" << std::endl;
+      }
+
+      // validate the result
+      bool is_valid = true;
+      for (gcs::Face F : v.adjacentFaces())
+      {
+        // get edge lengths
+        std::array<int, 3> edge_indices = order_triangle_edge_indices(F, vertex_idx);
+        double l_ij = L_opt[edge_indices[0]];
+        double l_ik = L_opt[edge_indices[1]];
+        double l_jk = iSData.recovered_L[edge_indices[2]];
+        if (!satisfies_triangle_ineq(l_ij, l_ik, l_jk))
+        {
+          is_valid = false;
+          break;
+        }
+      }
+      if (!is_valid)
+      {
+        step_size = 0.5 * step_size;
+      } else {
+        found_valid_step = true;
+        u_i = u_i - step;
+        break;
+      }
+    }
+    if (!found_valid_step) { exit(-1); }
 
     // safety check for NaN
-    if (u_i != u_i) { std::cout << dye("Encountered NaN!", RED) << std::endl; return; }
-    // update edge lengths in L_opt with u_i as a parameter
-    for (const auto& pair : L_opt)
-    {
-      L_opt[pair.first] = std::exp(u_i / 2.0) * iSData.recovered_L[pair.first];
-      gcs::Edge E = iSData.recoveredMesh->edge(pair.first);
-      // std::cout << "  (" << pair.first << ": (" << E.firstVertex().getIndex() << ", " << E.secondVertex().getIndex() << ")" << ", " << L_opt[pair.first] << ")" << std::endl;
-    }
+    if (u_i != u_i) { std::cout << dye("replay_vertex_flattening: Encountered NaN!", RED) << std::endl; exit(-1); }
     i++;
   }
 
@@ -994,9 +1038,7 @@ void replay_vertex_flattening(iSimpData& iSData, const int vertex_idx)
     double l_ik = L_opt[edge_indices[1]];
     double l_jk = iSData.recovered_L[edge_indices[2]];
 
-    if ((l_ij > l_ik + l_jk + eps)
-    ||  (l_ik > l_ij + l_jk + eps)
-    ||  (l_jk > l_ij + l_ik + eps))
+    if (!satisfies_triangle_ineq(l_ij, l_ik, l_jk))
     {
       // TODO: perform edge flips to try to mitigate it
       std::cout << dye("replay_vertex_flattening: Violated triangle inequality", RED) << std::endl;

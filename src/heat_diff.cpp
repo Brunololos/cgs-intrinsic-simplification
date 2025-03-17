@@ -127,7 +127,8 @@ void build_cotan_laplacian(heatDiffData& hdData, const iSimpData& iSData)
         {
             int neighbor_idx = vj.getIndex();
             int j = hdData.vertex_idcs_to_heat_idcs.at(neighbor_idx);
-            if (vertex_idx == neighbor_idx) { std::cout << RED << "build_cotan_laplacian: Encountered self-edge!" << RESET << std::endl; exit(-1); }
+            if (vertex_idx == neighbor_idx) { continue; }
+            // if (vertex_idx == neighbor_idx) { std::cout << RED << "build_cotan_laplacian: Encountered self-edge!" << RESET << std::endl; exit(-1); }
 
             // std::cout << "Getting connecting edge idx... " << std::endl;
             int edge_idx = iSData.recoveredMesh->connectingEdge(vi, vj).getIndex();
