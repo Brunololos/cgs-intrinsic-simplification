@@ -35,6 +35,7 @@ int main(int argc, char *argv[])
   double diffusion_stepsize;
   double min_diff_stepsize = 0.0001;
   double max_diff_stepsize = 0.01;
+  bool do_auto_diffuse = true;
 
   int min_n_vertices = 0;
   bool using_texture = true;
@@ -58,6 +59,7 @@ int main(int argc, char *argv[])
   std::vector<std::vector<BarycentricPoint>> mapped_points_snapshots;
   std::vector<int> snapshot_mapping_indices;
   std::vector<int> simp_step_mapping_indices;
+  Eigen::VectorXd current_heat;
 
   MatrixXuc R, G, B, A;
   int TEXTURE_WIDTH = 1000;// 2000;
@@ -66,6 +68,7 @@ int main(int argc, char *argv[])
   std::vector<unsigned char> ps_heat_texture = std::vector<unsigned char>();
   polyscope::SurfaceCornerParameterizationQuantity* q = nullptr;
   polyscope::SurfaceCornerParameterizationQuantity* h = nullptr;
+  polyscope::SurfaceVertexScalarQuantity* g = nullptr;
   polyscope::SurfaceMesh* psCoarseMesh;
   polyscope::SurfaceMesh* psMesh;
 
@@ -166,9 +169,24 @@ int main(int argc, char *argv[])
     177.0 / 255.0, 89.0 / 255.0, 40.0 / 255.0
   ).finished();
 
+  polyscope::init();
+  polyscope::render::ValueColorMap reds_cmap = polyscope::render::engine->getColorMap("reds");
+  polyscope::render::ValueColorMap blues_cmap = polyscope::render::engine->getColorMap("blues");
+  polyscope::render::ValueColorMap coolwarm_cmap = polyscope::render::engine->getColorMap("coolwarm");
   Eigen::Vector3d Red = (Eigen::Vector3d() << 202.0 / 255.0, 0.0 / 255.0, 32.0 / 255.0).finished();
   Eigen::Vector3d Blue = (Eigen::Vector3d() << 5.0 / 255.0, 113.0 / 255.0, 176.0 / 255.0).finished();
   Eigen::Vector3d White = (Eigen::Vector3d() << 255.0 / 255.0, 255.0 / 255.0, 255.0 / 255.0).finished();
+
+  // NOTE: This is only for the polyscope VertexScalarQuantity. Not needed for the heat texture mapping.
+  auto update_heat = [&]()
+  {
+    current_heat = Eigen::VectorXd::Zero(iSData.inputMesh->nVertices());
+    for (int i=0; i<hdData.heat_sample_vertices.size(); i++)
+    {
+      int vertex_idx = hdData.heat_sample_vertices[i];
+      current_heat(vertex_idx, 0) = get_heat(hdData, vertex_idx);
+    }
+  };
 
   // coloring
   int numVorF = (true /* true: visualize over vertices, false: visualize over faces */) ? V.rows() : F.rows();
@@ -449,9 +467,9 @@ int main(int argc, char *argv[])
       // if(coarsen_to_n_vertices == 4) { std::cout << "Got vertex: " << v1_idx << " heat: " << heat1 << std::endl; }
       // if(coarsen_to_n_vertices == 4) { std::cout << "Got vertex: " << v2_idx << " heat: " << heat2 << std::endl; }
       // if(coarsen_to_n_vertices == 4) { std::cout << "Got vertex: " << v3_idx << " heat: " << heat3 << std::endl; }
-      if (heat1 > 1.0) { std::cout << "encountered excessive heat: " << heat1 << std::endl; }
-      if (heat2 > 1.0) { std::cout << "encountered excessive heat: " << heat2 << std::endl; }
-      if (heat3 > 1.0) { std::cout << "encountered excessive heat: " << heat3 << std::endl; }
+      // if (heat1 > 1.0) { std::cout << "encountered excessive heat: " << heat1 << std::endl; }
+      // if (heat2 > 1.0) { std::cout << "encountered excessive heat: " << heat2 << std::endl; }
+      // if (heat3 > 1.0) { std::cout << "encountered excessive heat: " << heat3 << std::endl; }
       for (int j = 0; j < iSData.mapped_by_triangle[i].size(); j++)
       {
         int original_idx = iSData.mapped_by_triangle[i][j];
@@ -463,19 +481,27 @@ int main(int argc, char *argv[])
         if (psum > 1.0) { p = p / psum; }
 
         double heat = heat1*p[0] + heat2*p[1] + heat3*p[2];
+        heat = std::max(std::min(heat, 1.0), 0.0);
         // std::cout << "heat: " << heat << std::endl;
         if (p[0] + p[1] + p[2] > 1.0) { std::cout << "encountered excessive barycentric coordinates: (" << p[0] << ", " << p[1] << ", " << p[2] << ") => " << p[0] + p[1] + p[2] << std::endl; }
         // if (heat > 1.0) { std::cout << "encountered excessive heat: " << heat << std::endl; }
         // if (heat < 0.0) { std::cout << "encountered weird heat: " << heat << std::endl; }
         // TODO: calculate corresponding color
-        Eigen::Vector3d C1, C2;
+        // Eigen::Vector3d C1, C2;
         // if (heat > 0.5) { C1 = Red; C2 = White; heat = (heat - 0.5)*2.0; }
         // else if (heat <= 0.5) { C1 = White; C2 = Blue; heat *= 2.0; }
-        C1 = Red;
-        C2 = Blue;
-        ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 0] = (heat*C1(0) + (1.0 - heat)*C2(0)) * 255;
-        ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 1] = (heat*C1(1) + (1.0 - heat)*C2(1)) * 255;
-        ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 2] = (heat*C1(2) + (1.0 - heat)*C2(2)) * 255;
+        // C1 = Red;
+        // C2 = Blue;
+        glm::vec3 C;
+        // if (heat > 0.5) { C = reds_cmap.getValue((heat - 0.5)*2.0); }
+        // else { C = blues_cmap.getValue(-((heat*2.0)-1.0)); }
+        C = coolwarm_cmap.getValue(heat);
+        ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 0] = (C.r) * 255;
+        ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 1] = (C.g) * 255;
+        ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 2] = (C.b) * 255;
+        // ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 0] = (heat*C1(0) + (1.0 - heat)*C2(0)) * 255;
+        // ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 1] = (heat*C1(1) + (1.0 - heat)*C2(1)) * 255;
+        // ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 2] = (heat*C1(2) + (1.0 - heat)*C2(2)) * 255;
         ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 3] = 255;
       }
     }
@@ -594,6 +620,12 @@ int main(int argc, char *argv[])
     {
         diffuse_over_n_steps = std::max(diffuse_over_n_steps - 1, 0);
         do_texture_update = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Auto Diffuse", &do_auto_diffuse))
+    {
+      // do texture update, when enabled
+      if(do_auto_diffuse) { do_texture_update = true; }
     }
     ImGui::Dummy(ImVec2(0.0f, 10.0f));
     ImGui::Text("Debug");
@@ -718,30 +750,30 @@ int main(int argc, char *argv[])
         // std::cout << "Mapping from " << snapshot_mapping_idx << " to " << simp_step_mapping_idx << std::endl;
         // std::cout << "target_removal_idx: " << target_removal_idx << std::endl;
         // get intrinsic connectivity/edge-lengths for heat diffusion
-        recover_intrinsics_at(simp_step_mapping_idx, iSData);
+        // recover_intrinsics_at(simp_step_mapping_idx, iSData);
+        if (do_auto_diffuse) {
+          recover_heat_and_intrinsics_at(simp_step_mapping_idx, hdData, iSData);
+        }
       } else {
         map_current_from(iSData, snapshot_mapping_idx);
         // std::cout << "Mapping from " << snapshot_mapping_idx << " to the end." << std::endl;
         // get intrinsic connectivity/edge-lengths for heat diffusion
-        recover_intrinsics_at(iSData.mapping.size()-1, iSData);
+        // recover_intrinsics_at(iSData.mapping.size()-1, iSData);
+        if (do_auto_diffuse) {
+          recover_heat_and_intrinsics_at(iSData.mapping.size()-1, hdData, iSData);
+        }
       }
-      // std::cout << "recovered intrinsics " << std::endl;
-      build_heat_sample_indices(hdData, iSData);
-      // std::cout << "built heat sample indices " << std::endl;
-      build_cotan_mass(hdData, iSData);
-      // std::cout << "built cotan mass " << std::endl;
-      build_cotan_laplacian(hdData, iSData);
-      // std::cout << "built cotan laplacian " << std::endl;
-      diffuse_heat(hdData, diffusion_stepsize, diffuse_over_n_steps);
-      // std::cout << "diffused heat " << std::endl;
-      // std::cout << "Mapping size: " << iSData.mapping.size() << std::endl;
-      // std::cout << "Step mapping size: " << simp_step_mapping_indices.size() << std::endl;
-      // std::cout << "Last step mapping idx: " << simp_step_mapping_indices.at(simp_step_mapping_indices.size() - 1) << std::endl;
-      // map_registered(iSData, coarsen_to_n_vertices);
-      // std::cout << iSData.mapped_points.size() << std::endl;
-      // reset_triang_texture();
-      // update_triang_texture();
-      update_textures();
+      if (do_auto_diffuse)
+      {
+        build_heat_sample_indices(hdData, iSData);
+        build_cotan_mass(hdData, iSData);
+        build_cotan_laplacian(hdData, iSData);
+        diffuse_heat(hdData, diffusion_stepsize, diffuse_over_n_steps);
+        update_heat_texture();
+        // NOTE: This is only for the polyscope VertexScalarQuantity. Not needed for the heat texture mapping.
+        update_heat();
+      }
+      update_triang_texture();
       if (q != nullptr) {
         q->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_triang_texture, polyscope::TextureFormat::RGBA8);
         // q->setEnabled(true);
@@ -753,6 +785,9 @@ int main(int argc, char *argv[])
         // h->setEnabled(true);
         h->setStyle(polyscope::ParamVizStyle::TEXTURE);
         h->setCheckerSize(1);
+      }
+      if (g != nullptr) {
+        g = psMesh->addVertexScalarQuantity("ps heat map", current_heat);
       }
     }
   };
@@ -771,6 +806,8 @@ int main(int argc, char *argv[])
 
   diffuse_heat(hdData, diffusion_stepsize, 0);
   update_textures();
+  // NOTE: This is only for the polyscope VertexScalarQuantity. Not needed for the heat texture mapping.
+  update_heat();
 
 
   // viewer.core().is_animating = true;
@@ -788,6 +825,7 @@ int main(int argc, char *argv[])
   // while (!iSData.hasConverged && iSData.intrinsicMesh->nVertices() > coarsen_to_n_vertices)
   while (!iSData.hasConverged)
   {
+    // std::cout << "Reducing to " << iSData.intrinsicMesh->nVertices() << " remaining vertices..." << std::endl;
     int step_mapping_idx = iSData.mapping.size();
     // make simplification step
     bool success = iSimp_step(iSData);
@@ -820,7 +858,6 @@ int main(int argc, char *argv[])
   // map_registered(iSData, coarsen_to_n_vertices);
   // update_textures();
 
-  polyscope::init();
   // psCoarseMesh  = polyscope::registerSurfaceMesh("coarse mesh", U, H); // TODO: visualize coarse mesh
   psMesh = polyscope::registerSurfaceMesh("input mesh", V, F);
 
@@ -845,6 +882,13 @@ int main(int argc, char *argv[])
     // h->setEnabled(true);
     h->setStyle(polyscope::ParamVizStyle::TEXTURE);
     h->setCheckerSize(1);
+
+    g = psMesh->addVertexScalarQuantity("ps heat map", current_heat);
+
+    // g->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_heat_texture, polyscope::TextureFormat::RGBA8);
+    // // h->setEnabled(true);
+    // g->setStyle(polyscope::ParamVizStyle::TEXTURE);
+    // g->setCheckerSize(1);
   }
 
   polyscope::state::userCallback = callback;

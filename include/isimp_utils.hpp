@@ -8,6 +8,8 @@
 #include "print.hpp"
 
 #include "isimp_data.hpp"
+#include "heat_diff_data.hpp"
+
 // register a point to be tracked through the simplification
 void register_point(iSimpData& iSData, const BarycentricPoint point, const TexCoord texcoord, const int face_idx);
 void map_registered(iSimpData& iSData, const int n_vertices);
@@ -33,7 +35,9 @@ double intrinsic_curvature_error(const iSimpData& iSData, const gcs::Vertex vert
 // replay operations for intrinsics recovery after initial simplification
 void replay_intrinsic_flip(iSimpData& iSData, const int edge_idx);
 void replay_vertex_flattening(iSimpData& iSData, const int vertex_idx);
+void replay_vertex_flattening_with_heat(iSimpData& iSData, heatDiffData& hdData, const int vertex_idx);
 void replay_vertex_removal(iSimpData& iSData, const int vertex_idx);
+void replay_vertex_removal_with_heat(iSimpData& iSData, heatDiffData& hdData, const int vertex_idx);
 
 std::array<int, 3> order_triangle_vertex_indices(const gcs::Face& face, const int F_first_v);
 std::array<int, 3> order_triangle_edge_indices(const gcs::Face& face, const int F_first_v);
@@ -53,7 +57,6 @@ double gaussian_curvature(const iSimpData& iSData, const gcs::Vertex& vertex);
 double find_tangent_space_angle(const iSimpData& iSData, const gcs::Edge& edge, const gcs::Vertex& vertex);
 PolarVector2D parallel_transport(const iSimpData& iSData, PolarVector2D tangent_vector, const gcs::Vertex origin, const gcs::Vertex target);
 
-// TODO: this doesnt make any sense! Here we check for triangle inequality violations, but this is not expected to hold anyways in the intrinsic regime.
 bool validate_intrinsic_edge_lengths(const iSimpData& iSData);
 
 #endif

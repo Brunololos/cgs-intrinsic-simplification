@@ -1,7 +1,5 @@
 #include "heat_diff.hpp"
 
-#include <random>
-
 void initHeatDiff(heatDiffData& hdData, const iSimpData& iSData)
 {
     initHeat(hdData, iSData);
@@ -22,6 +20,8 @@ void initHeat(heatDiffData& hdData, const iSimpData& iSData)
     {
         hdData.initial_heat(i, 0) = distribution(generator);
     }
+    hdData.recovered_heat = hdData.initial_heat;
+    hdData.final_heat = hdData.recovered_heat;
 }
 
 void build_heat_sample_indices(heatDiffData& hdData, const iSimpData& iSData)
@@ -44,13 +44,14 @@ void diffuse_heat(heatDiffData& hdData, const double stepsize, const int steps)
     Eigen::MatrixXd A, B;
     A = hdData.M - stepsize * hdData.L;
 
-    // choose only relevant heat values from initial heat
+    // choose only relevant heat values from recovered heat
     int n = hdData.heat_sample_vertices.size();
     hdData.final_heat = Eigen::Matrix<double, -1, 1>::Zero(n, 0);
     for (int i=0; i<n; i++)
     {
         int vertex_idx = hdData.heat_sample_vertices[i];
-        hdData.final_heat(i, 0) = hdData.initial_heat(vertex_idx);
+        // hdData.final_heat(i, 0) = hdData.initial_heat(vertex_idx);
+        hdData.final_heat(i, 0) = hdData.recovered_heat(vertex_idx);
         // std::cout << "iteration " << i << " progress_percent: " << progress_percent << ", next_bar_percent: " << next_bar_percent << std::endl;
     }
     // printEigenMatrixXd("initial heat", hdData.final_heat);
@@ -148,7 +149,7 @@ void build_cotan_laplacian(heatDiffData& hdData, const iSimpData& iSData)
 
 double barycentric_lumped_mass(const iSimpData& iSData, const int vertex_idx)
 {
-    // if (iSData.intrinsicMesh->nVertices() <= vertex_idx) { std::cout << RED << "passed out of bounds vertex idx to barycentric_lumped_mass!" << RESET << std::endl; exit(-1); }
+    if (iSData.inputMesh->nVertices() <= vertex_idx) { std::cout << RED << "passed out of bounds vertex idx to barycentric_lumped_mass!" << RESET << std::endl; exit(-1); }
     double total_area = 0.0;
     for (gcs::Face F : iSData.intrinsicMesh->vertex(vertex_idx).adjacentFaces())
     {
@@ -170,7 +171,6 @@ double circumcentric_dual_mass(const iSimpData& iSData, const int vertex_idx)
 {
     double total_area = 0.0;
     gcs::Vertex V = iSData.recoveredMesh->vertex(vertex_idx);
-    // double epsilon = std::numeric_limits<double>().epsilon();
     double epsilon = 0.000001;
 
     for (gcs::Face F : V.adjacentFaces())
@@ -187,7 +187,6 @@ double circumcentric_dual_mass(const iSimpData& iSData, const int vertex_idx)
         double l_jk = iSData.recovered_L(e_jk);
         double midpoint_l_ij = l_ij/2.0;
         double midpoint_l_ik = l_ik/2.0;
-        // if (vertex_idx == 383) { std::cout << "Got edge-lengths: l_ij: " << l_ij << ", l_ik: " << l_ik << ", l_jk: " << l_jk << std::endl; }
 
         // Swap so the first edge is always the shorter one
         if (midpoint_l_ij > midpoint_l_ik)
@@ -203,7 +202,6 @@ double circumcentric_dual_mass(const iSimpData& iSData, const int vertex_idx)
             int tmp_e = e_ij;
             e_ij = e_ik;
             e_ik = tmp_e;
-            // if (vertex_idx == 383) { std::cout << "swapping sides" << std::endl; }
         }
 
         // The angle beta is only is reasonable, when considering a right triangle, i.e. in the TRIANGLE/CHOPPED TRIANGLE CASES
@@ -238,17 +236,6 @@ double circumcentric_dual_mass(const iSimpData& iSData, const int vertex_idx)
                 // calc chopped off triangle side lengths
                 double sa = c - midpoint_l_ik;
                 double sb = tan(beta)*sa;
-
-                // if (vertex_idx == 383)
-                // {
-                //     std::cout << "alpha = " << alpha << std::endl;
-                //     std::cout << "beta = " << beta << std::endl;
-                //     std::cout << "a = " << a << std::endl;
-                //     std::cout << "b = " << b << std::endl;
-                //     std::cout << "sa = " << sa << std::endl;
-                //     std::cout << "sb = " << sb << std::endl;
-                // }
-
                 area_contribution = (a*b - sa*sb)/2.0;
                 break;
             }
@@ -272,34 +259,6 @@ double circumcentric_dual_mass(const iSimpData& iSData, const int vertex_idx)
                 break;
             }
         }
-        // if (vertex_idx == 383)
-        // {
-        //     std::cout << "Vertex 383 mass contribution of: " << area_contribution << " for calculation case: ";
-        //     switch(calculation_case)
-        //     {
-        //         default:
-        //         case CircumcentricShape::ZERO:
-        //             std::cout << "ZERO!" << std::endl;
-        //             break;
-        //         case CircumcentricShape::TRIANGLE:
-        //             std::cout << "TRIANGLE" << std::endl;
-        //             break;
-        //         case CircumcentricShape::CHOPPED_TRIANGLE:
-        //         {
-        //             std::cout << "CHOPPED_TRIANGLE" << std::endl;
-        //             break;
-        //         }
-        //         case CircumcentricShape::RECTANGLE:
-        //             std::cout << "RECTANGLE" << std::endl;
-        //             break;
-        //         case CircumcentricShape::CHOPPED_QUADRILATERAL:
-        //         {
-        //             std::cout << "CHOPPED_QUADRILATERAL" << std::endl;
-        //             break;
-        //         }
-        //     }
-        // }
-
         total_area += area_contribution;
     }
 
@@ -339,13 +298,7 @@ double cotan_weight(const iSimpData& iSData, const int edge_idx)
     {
         double l_ik = iSData.recovered_L(edge_indices[1]);
         double l_jk = iSData.recovered_L(edge_indices[2]);
-        // std::cout << "Calling angle_i_from_lengths for alpha with: l_ij=" << l_ij << ", l_ik=" << l_ik << ", l_jk=" << l_jk << std::endl;
-        // double alpha = angle_i_from_lengths(l_ij, l_ik, l_jk);
         double alpha = angle_i_from_lengths(l_ik, l_jk, l_ij);
-        // if (edge.firstVertex().getIndex() == 383 || edge.secondVertex().getIndex() == 383)
-        // {
-        //     std::cout << "Angle alpha: " << (alpha*180)/M_PI << " for edge: (" << edge.firstVertex().getIndex() << ", " << edge.secondVertex().getIndex() << ")" << std::endl;
-        // }
         if (alpha > 2*M_PI) { std::cout << RED << "cotan_weight encountered angle larger than 2PI or equivalently 180 degrees!" << RESET << std::endl; exit(-1); }
 
         if (alpha <= M_PI/2.0)
@@ -354,29 +307,15 @@ double cotan_weight(const iSimpData& iSData, const int edge_idx)
         }
         if (alpha > M_PI/2.0)
         {
-            // weight += (alpha < M_PI - deg_epsilon) ? -(cos(alpha)/sin(alpha)) : -l_ik;
             weight += (alpha < M_PI - deg_epsilon) ? (cos(alpha)/sin(alpha)) : -l_ik;
         }
-
-        // if (edge.firstVertex().getIndex() == 383 || edge.secondVertex().getIndex() == 383)
-        // {
-        //     std::cout << "alpha weight: " << weight << std::endl;
-        // }
     }
-    // TODO: remove print temp thing
-    double prev_weight = weight;
 
     if (faces >= 2)
     {
         double l_il = iSData.recovered_L(edge_indices[3]);
         double l_jl = iSData.recovered_L(edge_indices[4]);
-        // std::cout << "Calling angle_i_from_lengths for beta with: l_ij=" << l_ij << ", l_il=" << l_il << ", l_jl=" << l_jl << std::endl;
-        // double beta = angle_i_from_lengths(l_ij, l_il, l_jl);
         double beta = angle_i_from_lengths(l_il, l_jl, l_ij);
-        // if (edge.firstVertex().getIndex() == 383 || edge.secondVertex().getIndex() == 383)
-        // {
-        //     std::cout << "Angle beta: " << (beta*180)/M_PI << " for edge: (" << edge.firstVertex().getIndex() << ", " << edge.secondVertex().getIndex() << ")" << std::endl;
-        // }
         if (beta > 2*M_PI) { std::cout << RED << "cotan_weight encountered angle larger than 2PI or equivalently 180 degrees!" << RESET << std::endl; exit(-1); }
 
         if (beta <= M_PI/2.0)
@@ -385,19 +324,9 @@ double cotan_weight(const iSimpData& iSData, const int edge_idx)
         }
         if (beta > M_PI/2.0)
         {
-            // weight += (beta < M_PI - deg_epsilon) ? -(cos(beta)/sin(beta)) : -l_il;
             weight += (beta < M_PI - deg_epsilon) ? (cos(beta)/sin(beta)) : -l_il;
         }
-        // if (edge.firstVertex().getIndex() == 383 || edge.secondVertex().getIndex() == 383)
-        // {
-        //     std::cout << "beta weight: " << weight - prev_weight << std::endl;
-        // }
     }
-
-    // if (edge.firstVertex().getIndex() == 383 || edge.secondVertex().getIndex() == 383)
-    // {
-    //     std::cout << "With the total weight: " << weight/2.0 << std::endl;
-    // }
 
     return weight / 2.0;
 }
