@@ -100,6 +100,8 @@ int main(int argc, char *argv[])
   bool virgin = true;
   bool view_constraints = true;
   bool view_all_points = false;
+  int selected_cmap = 0;
+  const char* cmaps[]{"coolwarm", "viridis", "blues", "reds", "pink-green", "phase", "spectral", "rainbow", "jet", "turbo"};
   bool optimise = false;
 
   // ISIMP (intrinsic-simplification)
@@ -205,7 +207,6 @@ int main(int argc, char *argv[])
     // std::cout << "Registering texels: " << std::endl;
     for (gcs::Face F : iSData.inputMesh->faces())
     {
-      // std::cout << "-> for extrinsic face: " << F << std::endl;
       std::array<int, 3> verts = std::array<int, 3>();
       int i = 0;
       for (gcs::Vertex V : F.adjacentVertices())
@@ -237,16 +238,7 @@ int main(int argc, char *argv[])
         {
           if (lies_inside_triangle(i, j, t0, t1, t2))
           {
-            // std::cout << to_str(Point2D(i, j)) << std::endl;
             BarycentricPoint bp = to_barycentric(Point2D(i, j), t0, t1, t2);
-            // std::cout << "Expressing texture coordinate: (" << i << ", " << j << ") barycentrically of: A=" << to_str(t0) << ", B=" << to_str(t1) << ", C=" << to_str(t2) << std::endl;
-            // std::cout << "Created barycentric point: " << to_str(bp) << std::endl;
-            // std::cout << "Converting back into explicit form 012, we get: " << to_str(to_explicit(bp, t0, t1, t2)) << std::endl;
-            // std::cout << "Converting back into explicit form 021, we get: " << to_str(to_explicit(bp, t0, t2, t1)) << std::endl;
-            // std::cout << "Converting back into explicit form 102, we get: " << to_str(to_explicit(bp, t1, t0, t2)) << std::endl;
-            // std::cout << "Converting back into explicit form 120, we get: " << to_str(to_explicit(bp, t1, t2, t0)) << std::endl;
-            // std::cout << "Converting back into explicit form 201, we get: " << to_str(to_explicit(bp, t2, t0, t1)) << std::endl;
-            // std::cout << "Converting back into explicit form 210, we get: " << to_str(to_explicit(bp, t2, t1, t0)) << std::endl;
             TexCoord tc = TexCoord(i, j);
             register_point(iSData, bp, tc, F.getIndex());
           }
@@ -257,29 +249,14 @@ int main(int argc, char *argv[])
 
   auto init_viewer_data = [&]()
   {
-    // polyscope_texture = std::vector<unsigned char>(4 * TEXTURE_WIDTH * TEXTURE_HEIGHT);
     ps_triang_texture.resize(4 * TEXTURE_WIDTH * TEXTURE_HEIGHT);
     ps_heat_texture.resize(4 * TEXTURE_WIDTH * TEXTURE_HEIGHT);
-  //   // prev face-based coloring: viewer.data().set_face_based(true);
-  //   // viewer.data().set_texture(R,G,B,A);
-  //   // viewer.data().set_colors(C);
-
-  //   // Calculate texture mapping
-  //   viewer.data().set_uv(UV);
-  //   viewer.data().set_texture(R, G, B);
-  //   viewer.data().show_texture = true;
-
-  //   // viewer.data().use_matcap = true;
-  //   viewer.data().point_size = 15;
-  //   viewer.data().line_width = 1;
-  //   viewer.data().show_lines = F.rows() < 20000;
   };
 
   // Selection
   bool translate = false;
   RAXIS rot_axis = RAXIS::YAW;
   bool only_visible = false;
-  // igl::opengl::glfw::imgui::SelectionWidget selection;
   Eigen::Array<double, Eigen::Dynamic, 1> W = Eigen::Array<double, Eigen::Dynamic, 1>::Zero(V.rows());
   Eigen::Array<double, Eigen::Dynamic, 1> and_visible = Eigen::Array<double, Eigen::Dynamic, 1>::Zero(V.rows());
 
@@ -292,9 +269,6 @@ int main(int argc, char *argv[])
   Eigen::MatrixXd constraints;
   Eigen::VectorXi bi;
   Eigen::VectorXi indices = Eigen::VectorXd::LinSpaced(V.rows(), 0.0, V.rows() - 1).cast<int>();
-
-  // igl::AABB<Eigen::MatrixXd, 3> tree;
-  // tree.init(V, F);
 
   const auto build_F_snapshot = [&](const iSimpData& iSData)
   {
@@ -435,20 +409,13 @@ int main(int argc, char *argv[])
   const auto &update_heat_texture = [&]()
   {
     int num_triangles = iSData.mapped_by_triangle.size();
-    // if(coarsen_to_n_vertices == 4) { std::cout << "mapped_by_triangle.size(): " << iSData.mapped_by_triangle.size() << std::endl; }
 
     // draw texture
     for (int i = 0; i < num_triangles; i++)
     {
-      // int v1_idx = F_snapshots[snapshot_idx][i][0];
-      // int v2_idx = F_snapshots[snapshot_idx][i][1];
-      // int v3_idx = F_snapshots[snapshot_idx][i][2];
-      // if (v1_idx == -1 || v2_idx == -1 || v3_idx == -1) { continue; }
-      // if(iSData.recoveredMesh->nVertices() == 4 && i < 7) { std::cout << "Checking if face " << i << " is dead..." << std::endl; }
       if (iSData.recoveredMesh->face(i).isDead()) { continue; }
       int v1_idx, v2_idx, v3_idx;
       int k = 0;
-      // if(coarsen_to_n_vertices == 4) { std::cout << "Getting vertices of face: " << i << "..." << std::endl; }
       for (gcs::Vertex V : iSData.recoveredMesh->face(i).adjacentVertices())
       {
         if (k==0) { v1_idx = V.getIndex(); }
@@ -456,17 +423,9 @@ int main(int argc, char *argv[])
         else if (k==2) { v3_idx = V.getIndex(); }
         k++;
       }
-      // if(coarsen_to_n_vertices == 4) { std::cout << "Determined face: " << i << " as {" << v1_idx << ", " << v2_idx << ", " << v3_idx << "}" << std::endl; }
-      // std::cout << "coloring face: " << i << std::endl;
-      // double heat1 = hdData.final_heat[v1_idx];
-      // double heat2 = hdData.final_heat[v2_idx];
-      // double heat3 = hdData.final_heat[v3_idx];
       double heat1 = get_heat(hdData, v1_idx);
       double heat2 = get_heat(hdData, v2_idx);
       double heat3 = get_heat(hdData, v3_idx);
-      // if(coarsen_to_n_vertices == 4) { std::cout << "Got vertex: " << v1_idx << " heat: " << heat1 << std::endl; }
-      // if(coarsen_to_n_vertices == 4) { std::cout << "Got vertex: " << v2_idx << " heat: " << heat2 << std::endl; }
-      // if(coarsen_to_n_vertices == 4) { std::cout << "Got vertex: " << v3_idx << " heat: " << heat3 << std::endl; }
       // if (heat1 > 1.0) { std::cout << "encountered excessive heat: " << heat1 << std::endl; }
       // if (heat2 > 1.0) { std::cout << "encountered excessive heat: " << heat2 << std::endl; }
       // if (heat3 > 1.0) { std::cout << "encountered excessive heat: " << heat3 << std::endl; }
@@ -475,7 +434,7 @@ int main(int argc, char *argv[])
         int original_idx = iSData.mapped_by_triangle[i][j];
         TexCoord texcoord = iSData.tracked_texcoords[original_idx];
 
-        // TODO: calculate heat value via interpolation
+        // calculate heat value via interpolation
         BarycentricPoint p = iSData.mapped_points[original_idx];
         double psum = p[0] + p[1] + p[2];
         if (psum > 1.0) { p = p / psum; }
@@ -486,22 +445,13 @@ int main(int argc, char *argv[])
         if (p[0] + p[1] + p[2] > 1.0) { std::cout << "encountered excessive barycentric coordinates: (" << p[0] << ", " << p[1] << ", " << p[2] << ") => " << p[0] + p[1] + p[2] << std::endl; }
         // if (heat > 1.0) { std::cout << "encountered excessive heat: " << heat << std::endl; }
         // if (heat < 0.0) { std::cout << "encountered weird heat: " << heat << std::endl; }
-        // TODO: calculate corresponding color
-        // Eigen::Vector3d C1, C2;
-        // if (heat > 0.5) { C1 = Red; C2 = White; heat = (heat - 0.5)*2.0; }
-        // else if (heat <= 0.5) { C1 = White; C2 = Blue; heat *= 2.0; }
-        // C1 = Red;
-        // C2 = Blue;
         glm::vec3 C;
-        // if (heat > 0.5) { C = reds_cmap.getValue((heat - 0.5)*2.0); }
-        // else { C = blues_cmap.getValue(-((heat*2.0)-1.0)); }
-        C = coolwarm_cmap.getValue(heat);
+        polyscope::render::ValueColorMap cmap = polyscope::render::engine->getColorMap(cmaps[selected_cmap]);
+        C = cmap.getValue(heat);
+
         ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 0] = (C.r) * 255;
         ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 1] = (C.g) * 255;
         ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 2] = (C.b) * 255;
-        // ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 0] = (heat*C1(0) + (1.0 - heat)*C2(0)) * 255;
-        // ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 1] = (heat*C1(1) + (1.0 - heat)*C2(1)) * 255;
-        // ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 2] = (heat*C1(2) + (1.0 - heat)*C2(2)) * 255;
         ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 3] = 255;
       }
     }
@@ -626,6 +576,10 @@ int main(int argc, char *argv[])
     {
       // do texture update, when enabled
       if(do_auto_diffuse) { do_texture_update = true; }
+    }
+    if(ImGui::Combo("Heat color map", &selected_cmap, cmaps, 10))
+    {
+      do_texture_update = true;
     }
     ImGui::Dummy(ImVec2(0.0f, 10.0f));
     ImGui::Text("Debug");

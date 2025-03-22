@@ -1740,19 +1740,19 @@ bool validate_intrinsic_edge_lengths(const iSimpData& iSData)
     }
 
     // Check triangle inequality
-    if (l_ij >= l_ik + l_jk/*  - eps */)
+    if (l_ij >= l_ik + l_jk)
     {
       std::cout << dye("validate_intrinsic_edge_lengths: Found triangle inequality violation! triangle "
        + std::to_string(F.getIndex()) + "(l_ij: " + std::to_string(l_ij) + " > l_ik: " + std::to_string(l_ik) + " + l_jk: " + std::to_string(l_jk) + ")", RED) << std::endl;
       return false;
     }
-    if (l_ik >= l_ij + l_jk/*  - eps */)
+    if (l_ik >= l_ij + l_jk)
     {
       std::cout << dye("validate_intrinsic_edge_lengths: Found triangle inequality violation! triangle "
        + std::to_string(F.getIndex()) + "(l_ik: " + std::to_string(l_ik) + " > l_ij: " + std::to_string(l_ij) + " + l_jk: " + std::to_string(l_jk) + ")", RED) << std::endl;
       return false;
     }
-    if (l_jk >= l_ik + l_ij/*  - eps */)
+    if (l_jk >= l_ik + l_ij)
     {
       std::cout << dye("validate_intrinsic_edge_lengths: Found triangle inequality violation! triangle "
        + std::to_string(F.getIndex()) + "(l_jk: " + std::to_string(l_jk) + " > l_ik: " + std::to_string(l_ik) + " + l_ij: " + std::to_string(l_ij) + ")", RED) << std::endl;
