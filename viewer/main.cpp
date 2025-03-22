@@ -4,9 +4,7 @@
 #include "polyscope/surface_mesh.h"
 #include "polyscope/surface_parameterization_quantity.h"
 
-// #define MIN_QUAD_WITH_FIXED_CPP_DEBUG
 #include <stdlib.h>
-// #include <igl/png/readPNG.h>
 #include <igl/read_triangle_mesh.h>
 #include <stdlib.h>
 #include <chrono>
@@ -18,8 +16,6 @@
 #include "lscm_wrapper.hpp"
 #include "query_texture_barycentrics.hpp"
 
-typedef Eigen::Matrix<unsigned char, Eigen::Dynamic, Eigen::Dynamic> MatrixXuc;
-
 // TODO: move this somewhere else
 enum class ISIMP_MODE
 {
@@ -29,7 +25,14 @@ enum class ISIMP_MODE
 
 int main(int argc, char *argv[])
 {
+  // PROGRAM SETTINGS
   std::string filename = "../../meshes/spot.obj";
+  int TEXTURE_WIDTH = 2000;
+  int TEXTURE_HEIGHT = 2000;
+  int snapshot_interval = 50;
+  bool verbose_simplification = false;
+
+  // UI SETTINGS
   int coarsen_to_n_vertices;
   int diffuse_over_n_steps;
   double diffusion_stepsize;
@@ -37,18 +40,79 @@ int main(int argc, char *argv[])
   double max_diff_stepsize = 0.01;
   bool do_auto_diffuse = true;
 
-  int min_n_vertices = 0;
-  bool using_texture = true;
+  // UI TRIGGERS
+  bool do_texture_update = false;
 
-  // int dot_pos = ((std::string) argv[1]).find_last_of('.');
-  int dot_pos = ((std::string) argv[1]).size() - 4;
-  if (argc > 1 && ((std::string) argv[1]).substr(dot_pos).compare(".obj"))
+  int min_n_vertices = 0;
+
+  // RUDIMENTARY ARGUMENT PARSING
+  int arg_idx = 1;
+  std::string mesh_arg = "";
+  std::string tex_arg = "";
+  std::string snap_arg = "";
+  std::string verb_arg = "";
+
+  // allow custom order args via "[arg_name]=[arg]"
+  while (arg_idx < argc)
+  {
+    std::string arg = std::string(argv[arg_idx]);
+    int eq_idx = arg.find_first_of("=");
+
+    // argument not specified
+    if (eq_idx == -1)
+    {
+      // std::cout << "no arg specifier provided for argument " << arg_idx << ":" << std::endl;
+      switch(arg_idx)
+      {
+        default:
+        case 1:
+          // std::cout << "-> assuming " << arg << " is the mesh." << std::endl;
+          mesh_arg = arg;
+          break;
+        case 2:
+          // std::cout << "-> assuming " << arg << " is the texture size." << std::endl;
+          tex_arg = arg;
+          break;
+        case 3:
+          // std::cout << "-> assuming " << arg << " is the snapshot interval." << std::endl;
+          snap_arg = arg;
+          break;
+        case 4:
+          // std::cout << "-> assuming " << arg << " is the verbosity." << std::endl;
+          verb_arg = arg;
+          break;
+      }
+    } else {
+      std::string arg_name = arg.substr(0, eq_idx);
+      if (arg_name == "mesh") {
+        mesh_arg = arg.substr(eq_idx+1);
+      } else if (arg_name == "tex") {
+        tex_arg = arg.substr(eq_idx+1);
+      } else if (arg_name == "snap") {
+        snap_arg = arg.substr(eq_idx+1);
+      } else if (arg_name == "verb") {
+        verb_arg = arg.substr(eq_idx+1);
+      } else {
+        std::cout << "Failed to parse argument!" << std::endl;
+      }
+    }
+    arg_idx++;
+  }
+
+  // setting args
+  int dot_pos = mesh_arg.size() - 4;
+  if (mesh_arg != "" && (mesh_arg.substr(dot_pos).compare(".obj")))
   {
     std::cout << "Please pass a .obj mesh as the first argument" << std::endl;
     exit(-1);
   }
-  if (argc > 1) { filename = argv[1]; }
-  // if (argc > 2) { coarsen_to_n_vertices = std::to_integer(string(argv[2])); }
+  if (mesh_arg != "") { filename = mesh_arg; }
+  if (tex_arg != "") {
+    TEXTURE_WIDTH = std::stoi(tex_arg);
+    TEXTURE_HEIGHT = TEXTURE_WIDTH;
+  }
+  if (snap_arg != "") { snapshot_interval = std::stoi(snap_arg); }
+  if (verb_arg != "") { verbose_simplification = (verb_arg == "verbose"); }
 
   Eigen::MatrixXd V, UV, NV;
   Eigen::MatrixXi F, UF, NF;
@@ -61,9 +125,6 @@ int main(int argc, char *argv[])
   std::vector<int> simp_step_mapping_indices;
   Eigen::VectorXd current_heat;
 
-  MatrixXuc R, G, B, A;
-  int TEXTURE_WIDTH = 1000;// 2000;
-  int TEXTURE_HEIGHT = 1000; //2000;
   std::vector<unsigned char> ps_triang_texture = std::vector<unsigned char>();
   std::vector<unsigned char> ps_heat_texture = std::vector<unsigned char>();
   polyscope::SurfaceCornerParameterizationQuantity* q = nullptr;
@@ -88,8 +149,6 @@ int main(int argc, char *argv[])
   mapped_points_snapshots = std::vector<std::vector<BarycentricPoint>>();
   snapshot_mapping_indices = std::vector<int>();
   simp_step_mapping_indices = std::vector<int>();
-  int snapshot_interval = 50;
-  bool do_texture_update = false;
 
   // modified vertices & faces
   Eigen::MatrixXd U = V;
@@ -101,7 +160,7 @@ int main(int argc, char *argv[])
   bool view_constraints = true;
   bool view_all_points = false;
   int selected_cmap = 0;
-  const char* cmaps[]{"coolwarm", "viridis", "blues", "reds", "pink-green", "phase", "spectral", "rainbow", "jet", "turbo"};
+  const char* cmaps[]{"coolwarm", "reds", "blues", "viridis", "pink-green", "phase", "spectral", "rainbow", "jet", "turbo"};
   bool optimise = false;
 
   // ISIMP (intrinsic-simplification)
@@ -117,44 +176,25 @@ int main(int argc, char *argv[])
   // randomize seed
   srand(time(NULL));
 
-  // TODO:
-  std::ofstream logFile;                     // logfile
-  bool doLogging = false;
-
-  R = 255 * MatrixXuc::Ones(TEXTURE_WIDTH, TEXTURE_HEIGHT);
-  G = 255 * MatrixXuc::Ones(TEXTURE_WIDTH, TEXTURE_HEIGHT);
-  B = 255 * MatrixXuc::Ones(TEXTURE_WIDTH, TEXTURE_HEIGHT);
-  A = 255 * MatrixXuc::Ones(TEXTURE_WIDTH, TEXTURE_HEIGHT);
-
+  // COLORING/VISUALIZATION
   Eigen::MatrixXd CM = (Eigen::MatrixXd(16, 3) <<
-                            // 0.8,0.8,0.8,                        // 0 gray
-                            //  1,1,1,
-                            //  1.0/255.0,31.0/255.0,255.0/255.0,   // 1 blue
-                            //  0/255.0,201.0/255.0,195.0/255.0,    // 2 cyan
-                            //  7.0/255.0,152.0/255.0,59.0/255.0,   // 3 green
-                            //  190.0/255.0,255.0/255.0,0.0/255.0,  // 4 lime
-                            //  255.0/255.0,243.0/255.0,0.0/255.0,  // 5 yellow
-                            //  245.0/255.0,152.0/255.0,0.0/255.0,  // 6 orange
-                            //  224.0/255.0,18.0/255.0,0.0/255.0,   // 7 red
-                            //  220.0/255.0,13.0/255.0,255.0/255.0  // 8 magenta
-                        1, 1, 1,                                    // 1 white
-                        178.0 / 255.0, 31.0 / 255.0, 53.0 / 255.0,  // 1 dark red
-                        216.0 / 255.0, 39.0 / 255.0, 53.0 / 255.0,  // 2 light red
-                        255.0 / 255.0, 116.0 / 255.0, 53.0 / 255.0, // 3 orange
-                        255.0 / 255.0, 161.0 / 255.0, 53.0 / 255.0, // 4 yellowish orange
-                        255.0 / 255.0, 203.0 / 255.0, 53.0 / 255.0, // 5 redish yellow
-                        255.0 / 255.0, 249.0 / 255.0, 53.0 / 255.0, // 6 yellow
-                        0.0 / 255.0, 117.0 / 255.0, 58.0 / 255.0,   // 7 dark green
-                        0.0 / 255.0, 158.0 / 255.0, 71.0 / 255.0,   // 8 green
-                        22.0 / 255.0, 221.0 / 255.0, 53.0 / 255.0,  // 9 light green
-                        0.0 / 255.0, 82.0 / 255.0, 165.0 / 255.0,   // 10 dark blue
-                        0.0 / 255.0, 121.0 / 255.0, 231.0 / 255.0,  // 11 blue
-                        0.0 / 255.0, 169.0 / 255.0, 252.0 / 255.0,  // 12 light blue
-                        104.0 / 255.0, 30.0 / 255.0, 126.0 / 255.0, // 13 dark purple
-                        125.0 / 255.0, 60.0 / 255.0, 181.0 / 255.0, // 14 purple
-                        189.0 / 255.0, 122.0 / 255.0, 246.0 / 255.0 // 15 light purple
-                        )
-                           .finished();
+    1, 1, 1,                                    // 1 white
+    178.0 / 255.0, 31.0 / 255.0, 53.0 / 255.0,  // 1 dark red
+    216.0 / 255.0, 39.0 / 255.0, 53.0 / 255.0,  // 2 light red
+    255.0 / 255.0, 116.0 / 255.0, 53.0 / 255.0, // 3 orange
+    255.0 / 255.0, 161.0 / 255.0, 53.0 / 255.0, // 4 yellowish orange
+    255.0 / 255.0, 203.0 / 255.0, 53.0 / 255.0, // 5 redish yellow
+    255.0 / 255.0, 249.0 / 255.0, 53.0 / 255.0, // 6 yellow
+    0.0 / 255.0, 117.0 / 255.0, 58.0 / 255.0,   // 7 dark green
+    0.0 / 255.0, 158.0 / 255.0, 71.0 / 255.0,   // 8 green
+    22.0 / 255.0, 221.0 / 255.0, 53.0 / 255.0,  // 9 light green
+    0.0 / 255.0, 82.0 / 255.0, 165.0 / 255.0,   // 10 dark blue
+    0.0 / 255.0, 121.0 / 255.0, 231.0 / 255.0,  // 11 blue
+    0.0 / 255.0, 169.0 / 255.0, 252.0 / 255.0,  // 12 light blue
+    104.0 / 255.0, 30.0 / 255.0, 126.0 / 255.0, // 13 dark purple
+    125.0 / 255.0, 60.0 / 255.0, 181.0 / 255.0, // 14 purple
+    189.0 / 255.0, 122.0 / 255.0, 246.0 / 255.0 // 15 light purple
+  ).finished();
 
   Eigen::MatrixXd CM2 = (Eigen::MatrixXd(12, 3) <<
     166.0 / 255.0, 206.0 / 255.0, 227.0 / 255.0,
@@ -172,12 +212,12 @@ int main(int argc, char *argv[])
   ).finished();
 
   polyscope::init();
-  polyscope::render::ValueColorMap reds_cmap = polyscope::render::engine->getColorMap("reds");
-  polyscope::render::ValueColorMap blues_cmap = polyscope::render::engine->getColorMap("blues");
-  polyscope::render::ValueColorMap coolwarm_cmap = polyscope::render::engine->getColorMap("coolwarm");
-  Eigen::Vector3d Red = (Eigen::Vector3d() << 202.0 / 255.0, 0.0 / 255.0, 32.0 / 255.0).finished();
-  Eigen::Vector3d Blue = (Eigen::Vector3d() << 5.0 / 255.0, 113.0 / 255.0, 176.0 / 255.0).finished();
-  Eigen::Vector3d White = (Eigen::Vector3d() << 255.0 / 255.0, 255.0 / 255.0, 255.0 / 255.0).finished();
+  std::cout << R"(  Intrinsic Simplification Settings:
+    Mesh:                       )" << filename << R"(
+    texture size:               )" << TEXTURE_WIDTH << "x" << TEXTURE_HEIGHT << R"(px
+    snapshot interval:          every )" << snapshot_interval << R"( vertex removals
+    verbose simplification:     )" << (verbose_simplification ? "true" : "false") << R"(
+  )" << std::endl;
 
   // NOTE: This is only for the polyscope VertexScalarQuantity. Not needed for the heat texture mapping.
   auto update_heat = [&]()
@@ -190,21 +230,11 @@ int main(int argc, char *argv[])
     }
   };
 
-  // coloring
-  int numVorF = (true /* true: visualize over vertices, false: visualize over faces */) ? V.rows() : F.rows();
-  // TODO: C can be removed, we now render colors differently
-  Eigen::MatrixXd C = Eigen::MatrixXd(numVorF, 3);
-  for (int i = 0; i < numVorF; i++)
-  {
-    C.row(i) = CM.row((i % (CM.rows() - 1)) + 1);
-  }
-
   // NOTE: this approach assumes, that all triangles lie completely within the texture. (No triangles wrap around the outside.)
   // I note this here, because lscm sometimes yields uv-coordinates that exceed the [0, 1] bounds. (They can be negative and their absolute value can exceed 1.)
-  // To fix this I translated & rescaled all uv's to be withing [0, 1]. Because we don't have a set texture and build it ourselves, this is fine.
+  // To fix this uv's can be translated & rescaled to be withing [0, 1]. Because we don't have a set texture and build it ourselves, this is fine.
   auto register_texels = [&]()
   {
-    // std::cout << "Registering texels: " << std::endl;
     for (gcs::Face F : iSData.inputMesh->faces())
     {
       std::array<int, 3> verts = std::array<int, 3>();
@@ -218,7 +248,7 @@ int main(int argc, char *argv[])
       // mapping from uv- to texture space
       Eigen::Matrix2d TexExt;
       TexExt << TEXTURE_WIDTH, 0,
-          0, TEXTURE_HEIGHT;
+                0, TEXTURE_HEIGHT;
 
       // triangle corners in texture space
       Point2D t0 = UV.row(verts[0]) * TexExt;
@@ -302,26 +332,13 @@ int main(int argc, char *argv[])
     return snapshot;
   };
 
+  // TODO: If I wanted I could implement a visualization of the tangent space reference edges and/or the error vectors
   const auto update_edges = [&]()
   {
-    // int UR = U.rows();
-    // int UC = U.cols();
 
-    // Eigen::MatrixXd grad_offset = U - gradients;
-    // Eigen::MatrixXi E = Eigen::MatrixXi(UR, 2);
-    // for (int i = 0; i<UR; i++)
-    // {
-    //   E(i, 0) = i;
-    //   E(i, 1) = UR + i;
-    // }
-    // // vertical stacking
-    // Eigen::MatrixXd P(U.rows()+grad_offset.rows(), U.cols());
-    // P << U, grad_offset;
-    // //viewer.data().line_width = 2.0; // NOTE: SUPPOSEDLY NOT SUPPORTED ON MAC & WINDOWS
-    // viewer.data().set_edges(P, E, CM.row(4));
   };
+
   auto compute_coloring = [&]() {
-    // update coloring
     int num_colors = CM.rows() - 1;
     Eigen::VectorXi Coloring = Eigen::VectorXi::Zero(iSData.F.rows());
     for (int i = 0; i < iSData.inputMesh->nFaces(); i++)
@@ -337,15 +354,8 @@ int main(int argc, char *argv[])
         bool valid = true;
         int current_color_idx = ((seeded_color_idx + j) % (num_colors - 1)) + 1;
         for(gcs::Face neighbor : current_face.adjacentFaces())
-        // for(gcs::Edge edge : current_face.adjacentVertices())
         {
           int neighbor_idx = neighbor.getIndex();
-          // for (gcs::Face neighbor : edge.adjacentFaces())
-          // {
-          //   if (neighbor.getIndex() != current_face.getIndex()) { neighbor_idx = neighbor.getIndex(); break; }
-          // }
-
-          // std::cout << "Checking neighbor face: " << neighbor_idx << std::endl;
           int neighbor_color_idx = Coloring(neighbor_idx);
           if (current_color_idx == neighbor_color_idx)
           {
@@ -357,7 +367,6 @@ int main(int argc, char *argv[])
       }
 
       Coloring(i) = color_idx;
-      // std::cout << "Setting coloring index: " << color_idx << std::endl;
     }
     colorings.push_back(Coloring);
   };
@@ -388,20 +397,11 @@ int main(int argc, char *argv[])
       for (int j = 0; j < iSData.mapped_by_triangle[i].size(); j++)
       {
         int original_idx = iSData.mapped_by_triangle[i][j];
-        // BarycentricPoint original_point = iSData.tracked_points[original_idx];
-        // Point2D tex_coord = to_explicit(original_point, );
         TexCoord texcoord = iSData.tracked_texcoords[original_idx];
-        // R(texcoord[0], texcoord[1]) = CM((i % num_colors) + 1, 0) * 255;
-        // G(texcoord[0], texcoord[1]) = CM((i % num_colors) + 1, 1) * 255;
-        // B(texcoord[0], texcoord[1]) = CM((i % num_colors) + 1, 2) * 255;
         ps_triang_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 0] = CM(colorings[n_removals](i), 0) * 255;
         ps_triang_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 1] = CM(colorings[n_removals](i), 1) * 255;
         ps_triang_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 2] = CM(colorings[n_removals](i), 2) * 255;
-        // polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 0] = CM(i % num_colors, 0) * 255;
-        // polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 1] = CM(i % num_colors, 1) * 255;
-        // polyscope_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 2] = CM(i % num_colors, 2) * 255;
         ps_triang_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 3] = 255;
-        // std::cout << "Setting texcoord: (" << texcoord[0] << ", " << texcoord[1] << "): R=" << CM(i%9, 0) << ", G=" << CM(i%9, 1) << ", B=" << CM(i%9, 2) << std::endl;
       }
     }
   };
@@ -482,23 +482,6 @@ int main(int argc, char *argv[])
     }
   };
 
-  // TODO: maybe make selected points translate with vertices during optimisation
-  const auto update_points = [&]()
-  {
-    // constrained
-    // viewer.data().clear_points();
-    // if (view_constraints || view_all_points)
-    // {
-    //   viewer.data().set_points(igl::slice_mask(all_constraints, (selected_mask * constraints_mask).cast<bool>(), 1), CM.row(6));
-    //   viewer.data().add_points(igl::slice_mask(/* all_constraints */ U, (selected_mask * (1 - constraints_mask)).cast<bool>(), 1), CM.row(5));
-    //   viewer.data().add_points(igl::slice_mask(all_constraints, ((1 - selected_mask) * constraints_mask).cast<bool>(), 1), CM.row(7));
-    // }
-    // if (view_all_points)
-    // {
-    //   viewer.data().add_points(igl::slice_mask(/* all_constraints */ U, ((1 - selected_mask) * (1 - constraints_mask)).cast<bool>(), 1), CM.row(2));
-    // }
-  };
-
   // update entire mesh
   auto refresh_coarse_mesh = [&]()
   {
@@ -507,24 +490,16 @@ int main(int argc, char *argv[])
       // polyscope::unre
     }
     // TODO: update connectivity
-    // H = iSData.intrinsicMesh->faces();
     psCoarseMesh  = polyscope::registerSurfaceMesh("coarse mesh", U, H);
-    // viewer.data().clear();
-    // viewer.data().set_mesh(U, H);
     init_viewer_data();
     update_textures();
-    // update_points();
-    // viewer.draw();
   };
 
   // update mesh vertices
   auto refresh_mesh_vertices = [&]()
   {
-    // viewer.data().set_vertices(U);
     init_viewer_data();
     update_textures();
-    // update_points();
-    // viewer.draw();
   };
 
   auto callback = [&]() {
@@ -548,9 +523,7 @@ int main(int argc, char *argv[])
     ImGui::Dummy(ImVec2(0.0f, 10.0f));
     ImGui::Text("Heat Diffusion");
     ImGui::Separator();
-    // if(ImGui::SliderFloat("Diffusion Stepsize", &diffusion_stepsize, 0.0001, 0.5))
     if(ImGui::SliderScalar("Diffusion Stepsize", ImGuiDataType_Double, &diffusion_stepsize, &min_diff_stepsize, &max_diff_stepsize))
-    // if(ImGui::SliderScalar("Diffusion Stepsize", ImGuiDataType_Double, &diffusion_stepsize, 0.0001, 0.5))
     {
       // TODO: only update heat texture, not only triangulation texture
       do_texture_update = true;
@@ -685,34 +658,27 @@ int main(int argc, char *argv[])
     }
     if (do_texture_update)
     {
+      // load latest snapshot
       do_texture_update = false;
       int snapshot_idx = std::floor((iSData.inputMesh->nVertices() - coarsen_to_n_vertices) / snapshot_interval);
       int coarsen_from_n_vertices = iSData.inputMesh->nVertices() - snapshot_idx * snapshot_interval;
       iSData.mapped_by_triangle = mapped_by_triangle_snapshots.at(snapshot_idx);
       iSData.mapped_points = mapped_points_snapshots.at(snapshot_idx);
 
+      // map from latest snapshot to desired simplification state & recover necessary information like connectivity & heat (those are replayed from the initial state as opposed to the latest snapshot)
       int snapshot_mapping_idx = snapshot_mapping_indices.at(snapshot_idx);
-      // std::cout << "Coarsening from: " << coarsen_from_n_vertices << " to " << coarsen_to_n_vertices << std::endl;
-      // map_current_from_to(iSData, coarsen_from_n_vertices, coarsen_to_n_vertices);
-      // if (snapshot_mapping_indices.size() > snapshot_idx + 1)
       if (simp_step_mapping_indices.size() > iSData.inputMesh->nVertices() - coarsen_to_n_vertices + 1)
       {
-        // int next_snapshot_mapping_idx = snapshot_mapping_indices.at(snapshot_idx + 1);
         int target_removal_idx = iSData.inputMesh->nVertices() - coarsen_to_n_vertices;
         int simp_step_mapping_idx = simp_step_mapping_indices.at(iSData.inputMesh->nVertices() - coarsen_to_n_vertices + 1);
         map_current_from_to(iSData, snapshot_mapping_idx, simp_step_mapping_idx);
-        // std::cout << "Mapping from " << snapshot_mapping_idx << " to " << simp_step_mapping_idx << std::endl;
-        // std::cout << "target_removal_idx: " << target_removal_idx << std::endl;
         // get intrinsic connectivity/edge-lengths for heat diffusion
-        // recover_intrinsics_at(simp_step_mapping_idx, iSData);
         if (do_auto_diffuse) {
           recover_heat_and_intrinsics_at(simp_step_mapping_idx, hdData, iSData);
         }
       } else {
         map_current_from(iSData, snapshot_mapping_idx);
-        // std::cout << "Mapping from " << snapshot_mapping_idx << " to the end." << std::endl;
         // get intrinsic connectivity/edge-lengths for heat diffusion
-        // recover_intrinsics_at(iSData.mapping.size()-1, iSData);
         if (do_auto_diffuse) {
           recover_heat_and_intrinsics_at(iSData.mapping.size()-1, hdData, iSData);
         }
@@ -753,8 +719,7 @@ int main(int argc, char *argv[])
   mapped_points_snapshots.push_back(iSData.mapped_points);
   snapshot_mapping_indices.push_back(0);
   simp_step_mapping_indices.push_back(0);
-  // std::cout << "write_success: " << igl::png::writePNG(R, G, B, A, "H:/GIT/cgs-intrinsic-simplification/textures/object_texture.png") << std::endl;
-  // // end insertion
+
   init_viewer_data();
   compute_coloring();
 
@@ -762,18 +727,6 @@ int main(int argc, char *argv[])
   update_textures();
   // NOTE: This is only for the polyscope VertexScalarQuantity. Not needed for the heat texture mapping.
   update_heat();
-
-
-  // viewer.core().is_animating = true;
-  // viewer.core().background_color.head(3) = CM.row(0).head(3).cast<float>();
-  // // update_points()
-  // viewer.launch();
-
-  // TODO: this is neat, but for the intrinsic case, still the custom edge lengths need to be used.
-  // iSData.inputGeometry->requireCotanLaplacian();
-  // iSData.inputGeometry->requireVertexGalerkinMassMatrix();
-  // Eigen::SparseMatrix<double> L = iSData.inputGeometry->cotanLaplacian;
-  // Eigen::SparseMatrix<double> M = iSData.inputGeometry->vertexGalerkinMassMatrix;
 
   std::cout << "\n\nBeginning Simplification..." << std::endl;
   // while (!iSData.hasConverged && iSData.intrinsicMesh->nVertices() > coarsen_to_n_vertices)
@@ -806,7 +759,6 @@ int main(int argc, char *argv[])
   }
   // refresh_coarse_mesh(); //TODO: update coarse mesh
   min_n_vertices = iSData.intrinsicMesh->nVertices();
-  // min_n_vertices = 200; // TODO: remove this when done with visualizations
 
   // coarsen_to_n_vertices = 5;
   // map_registered(iSData, coarsen_to_n_vertices);
@@ -815,35 +767,33 @@ int main(int argc, char *argv[])
   // psCoarseMesh  = polyscope::registerSurfaceMesh("coarse mesh", U, H); // TODO: visualize coarse mesh
   psMesh = polyscope::registerSurfaceMesh("input mesh", V, F);
 
-  if (using_texture) {
-    // convert parameterization to polyscope's desired input format
-    Eigen::Matrix<glm::vec2, Eigen::Dynamic, 1> parameterization(3 * UF.rows());
-    for (int iF = 0; iF < UF.rows(); iF++) {
-      for (int iC = 0; iC < 3; iC++) {
-        parameterization(3 * iF + iC) = glm::vec2{UV(UF(iF, iC), 0), UV(UF(iF, iC), 1)};
-      }
+  // convert parameterization to polyscope's desired input format
+  Eigen::Matrix<glm::vec2, Eigen::Dynamic, 1> parameterization(3 * UF.rows());
+  for (int iF = 0; iF < UF.rows(); iF++) {
+    for (int iC = 0; iC < 3; iC++) {
+      parameterization(3 * iF + iC) = glm::vec2{UV(UF(iF, iC), 0), UV(UF(iF, iC), 1)};
     }
-    q = psMesh->addParameterizationQuantity("intrinsic triangulation", parameterization);
-
-    q->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_triang_texture, polyscope::TextureFormat::RGBA8);
-    q->setEnabled(true);
-    q->setStyle(polyscope::ParamVizStyle::TEXTURE);
-    q->setCheckerSize(1);
-
-    h = psMesh->addParameterizationQuantity("heat map", parameterization);
-
-    h->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_heat_texture, polyscope::TextureFormat::RGBA8);
-    // h->setEnabled(true);
-    h->setStyle(polyscope::ParamVizStyle::TEXTURE);
-    h->setCheckerSize(1);
-
-    g = psMesh->addVertexScalarQuantity("ps heat map", current_heat);
-
-    // g->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_heat_texture, polyscope::TextureFormat::RGBA8);
-    // // h->setEnabled(true);
-    // g->setStyle(polyscope::ParamVizStyle::TEXTURE);
-    // g->setCheckerSize(1);
   }
+  q = psMesh->addParameterizationQuantity("intrinsic triangulation", parameterization);
+
+  q->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_triang_texture, polyscope::TextureFormat::RGBA8);
+  q->setEnabled(true);
+  q->setStyle(polyscope::ParamVizStyle::TEXTURE);
+  q->setCheckerSize(1);
+
+  h = psMesh->addParameterizationQuantity("heat map", parameterization);
+
+  h->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_heat_texture, polyscope::TextureFormat::RGBA8);
+  // h->setEnabled(true);
+  h->setStyle(polyscope::ParamVizStyle::TEXTURE);
+  h->setCheckerSize(1);
+
+  g = psMesh->addVertexScalarQuantity("ps heat map", current_heat);
+
+  // g->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_heat_texture, polyscope::TextureFormat::RGBA8);
+  // // h->setEnabled(true);
+  // g->setStyle(polyscope::ParamVizStyle::TEXTURE);
+  // g->setCheckerSize(1);
 
   polyscope::state::userCallback = callback;
   polyscope::show();
