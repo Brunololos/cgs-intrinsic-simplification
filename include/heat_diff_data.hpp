@@ -4,7 +4,6 @@
 #include <Eigen/Core>
 #include <Eigen/Dense>
 #include <unordered_map>
-// #include "geom_helpers.hpp"
 
 struct heatDiffData {
     Eigen::Matrix<double, -1, 1> initial_heat;

@@ -1,6 +1,7 @@
 #ifndef PRINT_H
 #define PRINT_H
 
+#include <chrono>
 #include "tinyad_defs.hpp"
 #include "gcs_defs.hpp"
 
@@ -17,6 +18,17 @@ static const std::string PURPLE = "\033[0;35m";
 static const std::string CYAN = "\033[0;36m";
 static const std::string WHITE = "\033[0;37m";
 static const std::string GRAY = "\033[0;90m";
+
+struct progressBar {
+    int total_bars;
+    double current_bars;
+    std::chrono::steady_clock::time_point start_time;
+    std::chrono::steady_clock::time_point end_time;
+};
+
+void start_progressBar(progressBar& bar, const int number_of_bars=24);
+void progress_progressBar(progressBar& bar, const double progress);
+void finish_progressBar(progressBar& bar);
 
 void printEigenMatrixXi(std::string name, Eigen::Matrix<int, Eigen::Dynamic, Eigen::Dynamic> M);
 void printEigenMatrixXd(std::string name, Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic> M);

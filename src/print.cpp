@@ -1,5 +1,33 @@
 #include "print.hpp"
 
+void start_progressBar(progressBar& bar, const int number_of_bars)
+{
+    bar.total_bars = number_of_bars;
+    bar.current_bars = 0;
+    bar.start_time = std::chrono::high_resolution_clock::now();
+    std::cout << "[" << std::flush;
+}
+
+void progress_progressBar(progressBar& bar, const double progress) {
+
+    float next_bar_percent = ((float) bar.current_bars+1)/((float) bar.total_bars);
+    for (; progress >= next_bar_percent;)
+    {
+        bar.current_bars += 1;
+        next_bar_percent = ((float) bar.current_bars+1)/((float) bar.total_bars);
+        std::cout << "#" << std::flush;
+    }
+}
+
+void finish_progressBar(progressBar& bar)
+{
+    // draw any remaining bars
+    progress_progressBar(bar, 1.0);
+    bar.end_time = std::chrono::high_resolution_clock::now();
+    double time_in_s = std::chrono::duration_cast<std::chrono::microseconds>(bar.end_time - bar.start_time).count() / (double) 1000000;
+    std::cout << "] (in " << time_in_s << " seconds)" << std::endl;
+}
+
 void printEigenMatrixXi(std::string name, Eigen::Matrix<int, Eigen::Dynamic, Eigen::Dynamic> M)
 {
     int n_zero_grads = 0;

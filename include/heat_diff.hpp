@@ -2,6 +2,7 @@
 #define HEAT_DIFF_H
 
 #include <random>
+#include <chrono>
 #include "heat_diff_data.hpp"
 #include "geom_helpers.hpp"
 #include "isimp_utils.hpp"

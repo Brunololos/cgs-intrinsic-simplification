@@ -26,6 +26,7 @@ bool flip_intrinsic(iSimpData& iSData, const gcs::Edge edge);
 bool flatten_vertex(iSimpData& iSData, const int vertex_idx);
 bool remove_vertex(iSimpData& iSData, const int vertex_idx);
 void flip_to_delaunay(iSimpData& iSData);
+void flip_to_delaunay(iSimpData& iSData, const std::vector<gcs::Vertex>& vertices);
 bool flip_vertex_to_deg3(iSimpData& iSData, const int vertex_idx);
 void rotate_reference_edge(iSimpData& iSData, const gcs::Vertex& vertex);
 
@@ -47,6 +48,7 @@ std::array<int, 5> order_quad_edge_indices(const gcs::Edge& edge, const int Fk_u
 std::array<int, 4> order_quad_vertex_indices(const gcs::Edge& edge);
 std::array<int, 4> order_quad_vertex_indices(const gcs::Edge& edge, const int Fk_unique_v, const int Fl_unique_v);
 std::array<int, 4> order_quad_vertex_indices(const gcs::Edge& edge, const int Fk_unique_v, const int Fl_unique_v, const int vi_idx);
+std::array<gcs::Face, 2> get_edge_faces(const gcs::Edge& edge);
 
 // returns faceindex and value
 std::pair<int, int> find_unique_vertex_index(const gcs::Face& F, const gcs::Edge& edge);

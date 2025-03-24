@@ -33,24 +33,9 @@ void map_registered(iSimpData& iSData, const int n_vertices)
   }
 }
 
-// WATCH OUT! mapped_points & mapped_by_data are assumed to be initialized correctly.
+// WATCH OUT! mapped_points & mapped_by_triangle are assumed to be initialized correctly.
 // And the mapping index has to be chosen correctly as well.
 // Use responsibly!
-// void map_current_from(iSimpData& iSData, const int from_n_vertices)
-// {
-//   int initial_vertex_count = iSData.inputMesh->nVertices();
-//   int current_vertex_count = from_n_vertices;
-//
-//   bool found_start = false;
-//   int removal_count = 0;
-//   for(int i=0; i<iSData.mapping.size(); i++)
-//   {
-//     if (iSData.mapping[i]->op_type == SIMP_OP::V_REMOVAL) { removal_count++; }
-//     if (removal_count == initial_vertex_count - current_vertex_count) { found_start = true; continue; }
-//     if (!found_start) { continue; }
-//     iSData.mapping[i]->map_to_coarse(iSData.mapped_points, iSData.mapped_by_triangle);
-//   }
-// }
 void map_current_from(iSimpData& iSData, const int from_mapping_idx)
 {
   for(int i=from_mapping_idx; i<iSData.mapping.size(); i++)
@@ -59,25 +44,9 @@ void map_current_from(iSimpData& iSData, const int from_mapping_idx)
   }
 }
 
-// WATCH OUT! mapped_points & mapped_by_data are assumed to be initialized correctly.
+// WATCH OUT! mapped_points & mapped_by_triangle are assumed to be initialized correctly.
 // And the mapping index has to be chosen correctly as well.
 // Use responsibly!
-// void map_current_from_to(iSimpData& iSData, const int from_n_vertices, const int n_vertices)
-// {
-//   int initial_vertex_count = iSData.inputMesh->nVertices();
-//   int remove_n_vertices = initial_vertex_count - n_vertices;
-// 
-//   bool found_start = false;
-//   int removal_count = 0;
-//   for(int i=0; i<iSData.mapping.size() && removal_count < remove_n_vertices; i++)
-//   {
-//     if (removal_count + from_n_vertices == initial_vertex_count) { found_start = true; }
-//     if (iSData.mapping[i]->op_type == SIMP_OP::V_REMOVAL) { removal_count++; }
-//     if (!found_start) { continue; }
-//     iSData.mapping[i]->map_to_coarse(iSData.mapped_points, iSData.mapped_by_triangle);
-//   }
-//   std::cout << "removed " << removal_count << "vertices from initially " << initial_vertex_count << " to get to " << n_vertices << " vertices." << std::endl;
-// }
 void map_current_from_to(iSimpData& iSData, const int from_mapping_idx, const int to_mapping_idx)
 {
   for(int i=from_mapping_idx; i<to_mapping_idx; i++)
@@ -110,7 +79,6 @@ bool is_edge_flippable(const iSimpData& iSData, const Quad2D& quad, const gcs::E
   // check if quad is convex
   if (!is_convex(quad))
   {
-    // std::cout << "Quad is nonconvex" << std::endl;
     return false;
   }
   return true;
@@ -118,21 +86,9 @@ bool is_edge_flippable(const iSimpData& iSData, const Quad2D& quad, const gcs::E
 
 bool flip_intrinsic(iSimpData& iSData, const gcs::Edge edge)
 {
-  // TODO: put this in a helper function
-  gcs::Face Fk;
-  gcs::Face Fl;
-  bool t = true;
-  for (gcs::Face F : edge.adjacentFaces())
-  {
-    if (t)
-    {
-      Fk = F;
-      t = false;
-    }
-    else {
-      Fl = F;
-    }
-  }
+  std::array<gcs::Face, 2> faces = get_edge_faces(edge);
+  gcs::Face Fk = faces[0];
+  gcs::Face Fl = faces[1];
 
   std::pair<int, int> Fk_unique = find_unique_vertex_index(Fk, edge);
   std::pair<int, int> Fl_unique = find_unique_vertex_index(Fl, edge);
@@ -173,7 +129,6 @@ bool flip_intrinsic(iSimpData& iSData, const gcs::Edge edge)
 
 bool flatten_vertex(iSimpData& iSData, const int vertex_idx)
 {
-  // std::cout << "flatten_vertex: " << std::endl;
   gcs::Vertex v = iSData.intrinsicMesh->vertex(vertex_idx);
   int backtracking_iterations = 10;
   double threshold = 0.0001;
@@ -375,12 +330,6 @@ bool remove_vertex(iSimpData& iSData, const int vertex_idx)
         return false;
       }
 
-      // if (vertex.degree() < 3)
-      // {
-      //   std::cout << "Vertex has insufficient degree for removal." << std::endl;
-      //   return false;
-      // }
-
       // NOTE: gcs::manifold_surface_mesh implementation does not allow boundary vertex removal
       if (vertex.isBoundary())
       {
@@ -397,7 +346,6 @@ bool remove_vertex(iSimpData& iSData, const int vertex_idx)
       // check if vertex is degree 3
       if (vertex.degree() != 3)
       {
-        // TODO: try to perform edge flips to get to degree 3
         return false;
       }
 
@@ -426,24 +374,10 @@ bool remove_vertex(iSimpData& iSData, const int vertex_idx)
           }
         }
       }
-      // std::cout << "Determined F_jk: " << F_jk << ", F_jl: " << F_jl << std::endl;
-
-      int i = 0;
-      // printGCSFace(iSData.intrinsicMesh->face(F_jk));
-      // printGCSFace(iSData.intrinsicMesh->face(F_jl));
-      // std::cout << "Determined e_ij: " << e_ij.getIndex() << " (" << e_ij.firstVertex().getIndex() << "," << e_ij.secondVertex().getIndex() << ")" << std::endl;
-      // std::cout << "AdjacentFaces: " << std::endl;
-      // for (gcs::Face F : vertex.adjacentFaces())
-      // {
-      //   printGCSFace(F);
-      // }
-      i = 0;
 
       std::pair<int, int> Fk_unique = find_unique_vertex_index(iSData.intrinsicMesh->face(F_jk), e_ij);
       std::pair<int, int> Fl_unique = find_unique_vertex_index(iSData.intrinsicMesh->face(F_jl), e_ij);
-      // std::cout << "Determined unique_v's" << std::endl;
-      // std::cout << "Fk_unique: " << Fk_unique.second << std::endl;
-      // std::cout << "Fl_unique: " << Fl_unique.second << std::endl;
+
       // get ordered intrinsic edge lengths from neighborhood
       std::array<int, 5> edge_indices = order_quad_edge_indices(e_ij, Fk_unique.second, Fl_unique.second, vertex_idx);
       double l_ij = iSData.L(edge_indices[0]);
@@ -452,11 +386,9 @@ bool remove_vertex(iSimpData& iSData, const int vertex_idx)
       double l_il = iSData.L(edge_indices[3]);
       double l_jl = iSData.L(edge_indices[4]);
       Quad2D unfolded = unfold(l_ij, l_ik, l_jk, l_il, l_jl);
-      // std::cout << "Determined unfolding" << std::endl;
 
       // determining at which position in each face the shared vertex resides
       std::vector<int> shared_face_vertex_indices = std::vector<int>();
-      // std::cout << "Removing vertex: " << vertex_idx << " with faces: {";
       int F_jk_shared = find_vertex_face_index(iSData.intrinsicMesh->face(F_jk), vertex_idx);
       shared_face_vertex_indices.push_back(F_jk_shared);
 
@@ -485,68 +417,6 @@ bool remove_vertex(iSimpData& iSData, const int vertex_idx)
       iSData.intrinsicMesh->removeVertex(vertex);
       F_res_permutation = (find_vertex_face_index(iSData.intrinsicMesh->face(F_res), vertex_idx) + 1 % 3);
 
-      // std::cout << "predicted F_res: " << std::endl;
-      // switch (F_res_permutation)
-      // {
-      //     default:
-      //     case 0:
-      //       std::cout << "vj, vk, vl: (" << ordered_verts[1] << ", " << ordered_verts[2] << ", " << ordered_verts[3] << ")" << std::endl;
-      //       break;
-      //     case 1:
-      //       std::cout << "vl, vj, vk: (" << ordered_verts[3] << ", " << ordered_verts[1] << ", " << ordered_verts[2] << ")" << std::endl;
-      //       break;
-      //     case 2:
-      //       std::cout << "vk, vl, vj: (" << ordered_verts[2] << ", " << ordered_verts[3] << ", " << ordered_verts[1] << ")" << std::endl;
-      //       break;
-      // }
-      // std::cout << "Face after removal: " << std::endl;
-      // printGCSFace(iSData.intrinsicMesh->face(F_res));
-      // std::cout << "F_jk: ";
-      // switch (F_jk_shared)
-      // {
-      //     default:
-      //     case 0:
-      //       std::cout << "vi, vj, vk: (" << ordered_verts[0] << ", " << ordered_verts[1] << ", " << ordered_verts[2] << ")" << std::endl;
-      //       break;
-      //     case 1:
-      //       std::cout << "vk, vi, vj: (" << ordered_verts[2] << ", " << ordered_verts[0] << ", " << ordered_verts[1] << ")" << std::endl;
-      //       break;
-      //     case 2:
-      //       std::cout << "vj, vk, vi: (" << ordered_verts[1] << ", " << ordered_verts[2] << ", " << ordered_verts[0] << ")" << std::endl;
-      //       break;
-      // }
-      // std::cout << "F_jl: ";
-      // switch (F_jl_shared)
-      // {
-      //     default:
-      //     case 0:
-      //       std::cout << "vi, vl, vj: (" << ordered_verts[0] << ", " << ordered_verts[3] << ", " << ordered_verts[1] << ")" << std::endl;
-      //       break;
-      //     case 1:
-      //       std::cout << "vj, vi, vl: (" << ordered_verts[1] << ", " << ordered_verts[0] << ", " << ordered_verts[3] << ")" << std::endl;
-      //       break;
-      //     case 2:
-      //       std::cout << "vl, vj, vi: (" << ordered_verts[3] << ", " << ordered_verts[1] << ", " << ordered_verts[0] << ")" << std::endl;
-      //       break;
-      // }
-      // std::cout << "F_kl: ";
-      // switch (F_kl_shared)
-      // {
-      //     default:
-      //     case 0:
-      //       std::cout << "vi, vk, vl: (" << ordered_verts[0] << ", " << ordered_verts[2] << ", " << ordered_verts[3] << ")" << std::endl;
-      //       break;
-      //     case 1:
-      //       std::cout << "vl, vi, vk: (" << ordered_verts[3] << ", " << ordered_verts[0] << ", " << ordered_verts[2] << ")" << std::endl;
-      //       break;
-      //     case 2:
-      //       std::cout << "vk, vl, vi: (" << ordered_verts[2] << ", " << ordered_verts[3] << ", " << ordered_verts[0] << ")" << std::endl;
-      //       break;
-      // }
-      // NOTE: I tried to figure out how geometry central determines the permutation of vertex indices of the resulting face (e.g. a face ijk could be stored as ijk, jki or kij, and we need to be exact here because this affects our barycentric coordinates)
-      // but I gave up. It mostly keeps the order of F_jk, but some unaccounted edge cases remain.
-      // Instead I just look what order gcs has determined and pass that.
-
       // insert vertex removal into mapping queue
       iSData.mapping.push_back(std::make_unique<Vertex_Removal>(vertex_idx, F_idxs, F_res, unfolded, shared_face_vertex_indices, F_res_permutation));
       return true;
@@ -555,29 +425,15 @@ bool remove_vertex(iSimpData& iSData, const int vertex_idx)
 // greedily flip edges, until delaunay
 void flip_to_delaunay(iSimpData& iSData)
 {
-  // std::cout << "flip_to_delaunay: " << std::endl;
   for (gcs::Edge E : iSData.intrinsicMesh->edges())
   {
     if(E.isBoundary()) { continue; }
-    gcs::Face Fk;
-    gcs::Face Fl;
-    int t = 0;
-    for (gcs::Face F : E.adjacentFaces())
-    {
-      if (t == 0) {
-        Fk = F;
-        t++;
-      } else {
-        Fl = F;
-        t++;
-      }
-    }
-    // another guard against flipping boundary edges
-    if (t<2) { continue; }
+    std::array<gcs::Face, 2> faces = get_edge_faces(E);
+    gcs::Face Fk = faces[0];
+    gcs::Face Fl = faces[1];
     std::pair<int, int> Fk_unique = find_unique_vertex_index(Fk, E);
     std::pair<int, int> Fl_unique = find_unique_vertex_index(Fl, E);
     std::array<int, 5> edge_indices = order_quad_edge_indices(E, Fk_unique.second, Fl_unique.second);
-    // std::array<int, 5> edge_indices = order_quad_edge_indices(E, Fk_unique.second, Fl_unique.second, E.firstVertex().getIndex());
     double l_ij = iSData.L(edge_indices[0]);
     double l_ik = iSData.L(edge_indices[1]);
     double l_jk = iSData.L(edge_indices[2]);
@@ -601,6 +457,52 @@ void flip_to_delaunay(iSimpData& iSData)
   }
   // bool result = validate_intrinsic_edge_lengths(iSData);
   // if (!result) { std::cout << "occurred in flip_to_delaunay: " << std::endl; }
+}
+
+// greedily flip edges, until delaunay
+// NOTE: Tested this, but yielded worse results than just going over all edges of the mesh
+void flip_to_delaunay(iSimpData& iSData, const std::vector<gcs::Vertex>& vertices)
+{
+  // gather edge indices a priori, so we don't get weird behavior due to concurrent modifications of the mesh during iteration.
+  std::vector<int> edge_idcs = std::vector<int>();
+  for (int i=0; i<vertices.size(); i++)
+  {
+    gcs::Vertex V = vertices[i];
+    for (gcs::Edge E : V.adjacentEdges())
+    {
+      edge_idcs.push_back(E.getIndex());
+    }
+  }
+
+  for (int i=0; i<edge_idcs.size(); i++)
+  {
+    gcs::Edge E = iSData.intrinsicMesh->edge(i);
+    if(E.isBoundary()) { continue; }
+    std::array<gcs::Face, 2> faces = get_edge_faces(E);
+    gcs::Face Fk = faces[0];
+    gcs::Face Fl = faces[1];
+    std::pair<int, int> Fk_unique = find_unique_vertex_index(Fk, E);
+    std::pair<int, int> Fl_unique = find_unique_vertex_index(Fl, E);
+    std::array<int, 5> edge_indices = order_quad_edge_indices(E, Fk_unique.second, Fl_unique.second);
+    double l_ij = iSData.L(edge_indices[0]);
+    double l_ik = iSData.L(edge_indices[1]);
+    double l_jk = iSData.L(edge_indices[2]);
+    double l_il = iSData.L(edge_indices[3]);
+    double l_jl = iSData.L(edge_indices[4]);
+
+    if (!satisfies_triangle_ineq(l_ij, l_ik, l_jk)) { std::cout << "flip_to_delaunay found triangle inequality violation!" << std::endl; }
+    if (!satisfies_triangle_ineq(l_ij, l_il, l_jl)) { std::cout << "flip_to_delaunay found triangle inequality violation!" << std::endl; }
+
+    if (l_ij < 0.0000000001) { std::cout << "flip_to_delaunay: Calling angle_i with zero length" << std::endl; }
+    double theta_k = angle_i_from_lengths(l_ik, l_jk, l_ij, false, "flip_to_delaunay");
+    if (l_ij < 0.0000000001) { std::cout << "flip_to_delaunay: Calling angle_i with zero length" << std::endl; }
+    double theta_l = angle_i_from_lengths(l_il, l_jl, l_ij, false, "flip_to_delaunay");
+
+    if(theta_k + theta_l > M_PI + 0.000001)
+    {
+      flip_intrinsic(iSData, E);
+    }
+  }
 }
 
 bool flip_vertex_to_deg3(iSimpData& iSData, const int vertex_idx)
@@ -937,21 +839,9 @@ std::array<int, 3> order_triangle_vertex_indices(const gcs::Face& face, const in
 void replay_intrinsic_flip(iSimpData& iSData, const int edge_idx)
 {
   gcs::Edge edge = iSData.recoveredMesh->edge(edge_idx);
-  // TODO: put this in a helper function
-  gcs::Face Fk;
-  gcs::Face Fl;
-  bool t = true;
-  for (gcs::Face F : edge.adjacentFaces())
-  {
-    if (t)
-    {
-      Fk = F;
-      t = false;
-    }
-    else {
-      Fl = F;
-    }
-  }
+  std::array<gcs::Face, 2> faces = get_edge_faces(edge);
+  gcs::Face Fk = faces[0];
+  gcs::Face Fl = faces[1];
 
   std::pair<int, int> Fk_unique = find_unique_vertex_index(Fk, edge);
   std::pair<int, int> Fl_unique = find_unique_vertex_index(Fl, edge);
@@ -1527,6 +1417,25 @@ std::array<int, 4> order_quad_vertex_indices(const gcs::Edge& edge, const int Fk
   indices[2] = Fk_unique_v;
   indices[3] = Fl_unique_v;
   return indices;
+}
+
+std::array<gcs::Face, 2> get_edge_faces(const gcs::Edge& edge)
+{
+  std::array<gcs::Face, 2> faces = std::array<gcs::Face, 2>();
+  bool t = true;
+  for (gcs::Face F : edge.adjacentFaces())
+  {
+    if (t)
+    {
+      faces[0] = F;
+      t = false;
+    }
+    else {
+      faces[1] = F;
+      break;
+    }
+  }
+  return faces;
 }
 
 std::pair<int, int> find_unique_vertex_index(const gcs::Face& F, const gcs::Edge& edge)

@@ -32,11 +32,9 @@ void initMesh(const Eigen::Matrix<double, -1, 3>& V, const Eigen::Matrix<int, -1
   int nEdges = data.intrinsicMesh->nEdges();
   data.inputL = Eigen::VectorXd::Zero(nEdges);
   int i = 0;
-  // std::cout << "Calculating L:\n" << std::endl; // TODO: remove
   for (gcs::Edge e : data.inputMesh->edges())
   {
     data.inputL(e.getIndex()) = data.inputGeometry->edgeLength(e);
-    // /* TODO: remove */ std::cout << "edge(" << e.firstVertex().getIndex() << ", " << e.secondVertex().getIndex() << ") L(" << i << ") = " << data.L(i) << std::endl;
     if(data.inputL(e.getIndex()) == 0.0) {
       std::cout << RED << "edge(" << e.firstVertex().getIndex() << ", " << e.secondVertex().getIndex() << ") L(" << i << ") = " << data.inputL(i) << RESET << std::endl;
     }
@@ -79,82 +77,12 @@ void initMesh(const Eigen::Matrix<double, -1, 3>& V, const Eigen::Matrix<int, -1
   data.hasConverged = false;
 }
 
-bool iSimp_step(iSimpData& data)
+bool iSimp_step(iSimpData& data, const bool verbose)
 {
   std::vector<gcs::Vertex> temp_neighbors = std::vector<gcs::Vertex>();
   int vertex_idx;
   double ice;
   bool could_flip, could_flatten, could_remove, could_flip_to_deg3;
-  // NOTE: Performing random intrinsic edge-flips
-  // vertex_idx = rand() % data.inputMesh->nEdges();
-  // vertex_idx = 1;
-  // // for (gcs::Edge E : data.intrinsicMesh->edges())
-  // TODO: just add this check into can_be_flipped() method (don't allow boundary flips)
-  // while (true)
-  // {
-  //   vertex_idx = rand() % data.intrinsicMesh->nEdges();
-  //   gcs::Edge E = data.intrinsicMesh->edge(r);
-  //   int nk = 0;
-  //   for (gcs::Face F : E.adjacentFaces())
-  //   {
-  //     nk++;
-  //   }
-  //   if (nk == 2)
-  //   {
-  //     vertex_idx = E.getIndex();
-  //     break;
-  //   }
-  // }
-  // std::cout << "flip edge: " << vertex_idx << " => (" << data.intrinsicMesh->edge(r).firstVertex().getIndex() << ", " << data.intrinsicMesh->edge(r).secondVertex().getIndex() << ")" << std::endl;
-  // could_flip = flip_intrinsic(data, data.intrinsicMesh->edge(r));
-  // if (could_flip)
-  // {
-  //   std::cout << "Edge flip successful!" << std::endl;
-  // }
-  // if (!could_flip)
-  // {
-  //   std::cout << "Edge flip failed!" << std::endl;
-  // }
-
-  // NOTE: Performing random intrinsic vertex flattenings
-  // vertex_idx = rand() % data.intrinsicMesh->nVertices();
-  // while (true)
-  // {
-  //   vertex_idx = rand() % data.intrinsicMesh->nVertices();
-  //   gcs::Vertex V = data.intrinsicMesh->vertex(r);
-  //   if (!V.isBoundary()) { break; }
-  // }
-  // // vertex_idx = 115;
-  // std::cout << "flatten vertex: " << vertex_idx << std::endl;
-  // could_flatten = flatten_vertex(data, vertex_idx);
-  // if(could_flatten) { std::cout << "Vertex Flattening successful!" << std::endl; }
-  // if(!could_flatten) { std::cout << "Vertex Flattening failed!" << std::endl; }
-
-  // vertex_idx = rand() % V.rows(); // data.intrinsicMesh->nVertices();
-  // i = 0;
-  // while (i < 100)
-  // {
-  //   vertex_idx = rand() % V.rows(); // data.intrinsicMesh->nVertices();
-  //   gcs::Vertex V = data.intrinsicMesh->vertex(r);
-  //   // std::cout << "Checking vertex: " << vertex_idx << std::endl;
-  //   if (!V.isDead() && !V.isBoundary())
-  //   {
-  //     // vertex_idx = 115;
-  //     std::cout << "\n\n\nflatten vertex: " << vertex_idx << std::endl;
-  //     could_flatten = flatten_vertex(data, vertex_idx);
-  //     if(!could_flatten) { std::cout << "Vertex Flattening failed!" << std::endl; break; }
-  //     std::cout << "\n\n\nflip vertex: " << vertex_idx << " to degree 3: " << std::endl;
-  //     could_flip_to_deg3 = flip_vertex_to_deg3(data, r);
-  //     if(!could_flip_to_deg3) { std::cout << dye("Vertex Flipping to degree 3 failed!", RED) << std::endl; break; }
-  //     std::cout << "\n\n\nremove vertex: " << vertex_idx << std::endl;
-  //     could_remove = remove_vertex(data, r);
-  //     if(could_remove) { std::cout << "Vertex Removal successful!" << std::endl; }
-  //     if(!could_remove) { std::cout << "Vertex Removal failed!" << std::endl; }
-  //     break;
-  //   }
-  //   i++;
-  // }
-
   bool result;
 
   if(data.Q.empty()) { data.hasConverged = true; return false; }
@@ -165,44 +93,28 @@ bool iSimp_step(iSimpData& data)
 
   if(std::isinf(ice)) { std::cout << "Converged!" << std::endl; data.hasConverged = true; return false; }
   if (data.intrinsicMesh->vertex(vertex_idx).isDead()) { return false; }
-  // if (data.intrinsicMesh->vertex(r).isBoundary()) { return true; }
-  // std::cout << "\n\n\nflatten vertex: " << vertex_idx << std::endl;
   could_flatten = flatten_vertex(data, vertex_idx);
-  result = validate_intrinsic_edge_lengths(data);
-  if (!result) { std::cout << "Errors occured after vertex flattening." << std::endl; }
   if(could_flatten)
   {
-    // std::cout << "\n\n\nflip vertex: " << vertex_idx << " to degree 3: " << std::endl;
     could_flip_to_deg3 = flip_vertex_to_deg3(data, vertex_idx);
-    result = validate_intrinsic_edge_lengths(data);
-    if (!result) { std::cout << "Errors occured after flipping to degree 3." << std::endl; }
     if(could_flip_to_deg3)
     {
-      // std::cout << "\n\n\nremove vertex: " << vertex_idx << std::endl;
       // save neighbors, because we cant iterate over vertex neighborhood after vertex removal
       temp_neighbors.clear();
-      // std::cout << "cleared temp_neighbors: ";
-      // for (gcs::Vertex neighbor : temp_neighbors) { std::cout << neighbor.getIndex() << ", "; }
-      // std::cout << std::endl;
-      for (gcs::Vertex neighbor : data.intrinsicMesh->vertex(vertex_idx).adjacentVertices()) { /* std::cout << "inserting temp_neighbor: " << neighbor.getIndex() << std::endl; */ temp_neighbors.push_back(neighbor); }
+      for (gcs::Vertex neighbor : data.intrinsicMesh->vertex(vertex_idx).adjacentVertices()) { temp_neighbors.push_back(neighbor); }
       could_remove = remove_vertex(data, vertex_idx);
-      // result = validate_intrinsic_edge_lengths(data);
-      // if (!result) { std::cout << "Errors occured after vertex removal." << std::endl; }
-      // if(could_remove) { std::cout << "Vertex Removal successful!" << std::endl; }
-      // else { std::cout << "Vertex Removal failed!" << std::endl; }
       // try to enforce delaunay by iterating over all edges and flipping them, if necessary
       // NOTE: one could try to be smarter and only iterate over edges incident to the changed vertices/edges
+      // NOTE2: I tried to be smarter, but not iterating over all edges yielded worse results
       flip_to_delaunay(data);
-      // result = validate_intrinsic_edge_lengths(data);
-      // if (!result) { std::cout << "Errors occured after flipping to delaunay." << std::endl; }
     }
-    // else { std::cout << dye("Flipping Vertex " + std::to_string(vertex_idx) + " to degree 3 failed!", RED) << std::endl; }
+    else if(verbose) { std::cout << "Flipping Vertex " + std::to_string(vertex_idx) + " to degree 3 failed!" << std::endl; }
 
   }
-  else { std::cout << "Vertex Flattening failed!" << std::endl; }
+  else if(verbose) { std::cout << "Vertex Flattening of Vertex " + std::to_string(vertex_idx) + " failed!" << std::endl; }
 
-  // TODO: on success: update values of neighbor ice's
-  // on failure: reinsert vertex with infinite value on failure
+  // on success: update values of neighbor ice's
+  // on failure: reinsert vertex with infinite cost on failure
   if (could_flatten && could_flip_to_deg3 && could_remove)
   {
     for (gcs::Vertex neighbor : temp_neighbors)
@@ -211,7 +123,6 @@ bool iSimp_step(iSimpData& data)
       if (neighbor.isDead()) { continue; }
       if (neighbor.getIndex() == vertex_idx) { continue; }
       double ice = intrinsic_curvature_error(data, neighbor);
-      // data.Q.erase(data.Q.find(std::make_shared<std::pair<int, double>>(data.Q_elems[neighbor.getIndex()]))); // erase the element to be sure the order gets updated
       data.Q.erase(std::make_shared<std::pair<int, double>>(data.Q_elems[neighbor.getIndex()])); // erase the element to be sure the order gets updated
       data.Q_elems[neighbor.getIndex()].second = ice;
       data.Q.insert(std::make_shared<std::pair<int, double>>(data.Q_elems[neighbor.getIndex()]));
@@ -229,6 +140,10 @@ void recover_intrinsics_at(const int mapping_idx, iSimpData& data)
   data.recoveredMesh.reset(new gcs::ManifoldSurfaceMesh(data.F));
   data.recovered_L = data.inputL;
 
+  std::cout << "Recovering intrinsics:        ";
+  progressBar bar;
+  start_progressBar(bar);
+
   // replay simplification operations
   for(int i=0; i<=mapping_idx; i++)
   {
@@ -245,7 +160,10 @@ void recover_intrinsics_at(const int mapping_idx, iSimpData& data)
         replay_vertex_removal(data, data.mapping[i]->reduced_primitive_idx());
         break;
     }
+    double progress_percent = ((double) i + 1) / ((double) mapping_idx + 1);
+    progress_progressBar(bar, progress_percent);
   }
+  finish_progressBar(bar);
 }
 
 void recover_heat_and_intrinsics_at(const int mapping_idx, heatDiffData& hdData, iSimpData& data)
@@ -253,6 +171,10 @@ void recover_heat_and_intrinsics_at(const int mapping_idx, heatDiffData& hdData,
   data.recoveredMesh.reset(new gcs::ManifoldSurfaceMesh(data.F));
   data.recovered_L = data.inputL;
   hdData.recovered_heat = hdData.initial_heat;
+
+  std::cout << "Recovering heat & intrinsics: ";
+  progressBar bar;
+  start_progressBar(bar);
 
   // replay simplification operations
   for(int i=0; i<=mapping_idx; i++)
@@ -270,5 +192,8 @@ void recover_heat_and_intrinsics_at(const int mapping_idx, heatDiffData& hdData,
         replay_vertex_removal_with_heat(data, hdData, data.mapping[i]->reduced_primitive_idx());
         break;
     }
+    double progress_percent = ((double) i + 1) / ((double) mapping_idx + 1);
+    progress_progressBar(bar, progress_percent);
   }
+  finish_progressBar(bar);
 }

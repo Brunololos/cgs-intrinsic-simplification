@@ -38,12 +38,43 @@ int main(int argc, char *argv[])
   double diffusion_stepsize;
   double min_diff_stepsize = 0.0001;
   double max_diff_stepsize = 0.01;
-  bool do_auto_diffuse = true;
 
-  // UI TRIGGERS
-  bool do_texture_update = false;
+  // UI TRIGGERS/STATE
+  bool do_intrinsics_recovery = false;
+  bool do_diffuse = false;
+  bool do_triang_texture_update = false;
+  bool do_heat_texture_update = false;
 
+  bool is_triang_map_up_to_date = true;
+  bool is_heat_map_up_to_date = true;
+
+  // POLYSCOPE
+  polyscope::SurfaceMesh* psMesh;
+  polyscope::SurfaceMesh* psCoarseMesh;
+  polyscope::SurfaceVertexScalarQuantity* g = nullptr;
+  polyscope::SurfaceCornerParameterizationQuantity* triang_map = nullptr;
+  polyscope::SurfaceCornerParameterizationQuantity* heat_map = nullptr;
+
+
+  // TEXTURING
+  std::vector<unsigned char> ps_triang_texture = std::vector<unsigned char>();
+  std::vector<unsigned char> ps_heat_texture = std::vector<unsigned char>();
+
+  // store all colorings for all different simplification states (for each vertex removal).
+  std::vector<Eigen::VectorXi> colorings;
+
+  // SIMPLIFICATION
+  Eigen::MatrixXd V, UV, NV;
+  Eigen::MatrixXi F, UF, NF;
   int min_n_vertices = 0;
+
+  // SIMPLIFICATION - SNAPSHOTS
+  // points tracked by triangle for each simplification state (I did this just to make the polyscope slider movement smoother, but this takes a lot of storage.)
+  std::vector<std::vector<std::vector<int>>> mapped_by_triangle_snapshots;
+  std::vector<std::vector<BarycentricPoint>> mapped_points_snapshots;
+  std::vector<int> snapshot_mapping_indices;
+  std::vector<int> simp_step_mapping_indices;
+  // Eigen::VectorXd current_heat;
 
   // RUDIMENTARY ARGUMENT PARSING
   int arg_idx = 1;
@@ -114,24 +145,6 @@ int main(int argc, char *argv[])
   if (snap_arg != "") { snapshot_interval = std::stoi(snap_arg); }
   if (verb_arg != "") { verbose_simplification = (verb_arg == "verbose"); }
 
-  Eigen::MatrixXd V, UV, NV;
-  Eigen::MatrixXi F, UF, NF;
-  // store all colorings for all different simplification states (for each vertex removal) (This is pretty inefficient.)
-  std::vector<Eigen::VectorXi> colorings;
-  // points tracked by triangle for each simplification state (I did this just to make the polyscope slider movement smoother, but this takes a lot of storage.)
-  std::vector<std::vector<std::vector<int>>> mapped_by_triangle_snapshots;
-  std::vector<std::vector<BarycentricPoint>> mapped_points_snapshots;
-  std::vector<int> snapshot_mapping_indices;
-  std::vector<int> simp_step_mapping_indices;
-  Eigen::VectorXd current_heat;
-
-  std::vector<unsigned char> ps_triang_texture = std::vector<unsigned char>();
-  std::vector<unsigned char> ps_heat_texture = std::vector<unsigned char>();
-  polyscope::SurfaceCornerParameterizationQuantity* q = nullptr;
-  polyscope::SurfaceCornerParameterizationQuantity* h = nullptr;
-  polyscope::SurfaceVertexScalarQuantity* g = nullptr;
-  polyscope::SurfaceMesh* psCoarseMesh;
-  polyscope::SurfaceMesh* psMesh;
 
   igl::readOBJ(filename, V, UV, NV, F, UF, NF);
 
@@ -220,15 +233,15 @@ int main(int argc, char *argv[])
   )" << std::endl;
 
   // NOTE: This is only for the polyscope VertexScalarQuantity. Not needed for the heat texture mapping.
-  auto update_heat = [&]()
-  {
-    current_heat = Eigen::VectorXd::Zero(iSData.inputMesh->nVertices());
-    for (int i=0; i<hdData.heat_sample_vertices.size(); i++)
-    {
-      int vertex_idx = hdData.heat_sample_vertices[i];
-      current_heat(vertex_idx, 0) = get_heat(hdData, vertex_idx);
-    }
-  };
+  // auto update_heat = [&]()
+  // {
+  //   current_heat = Eigen::VectorXd::Zero(iSData.inputMesh->nVertices());
+  //   for (int i=0; i<hdData.heat_sample_vertices.size(); i++)
+  //   {
+  //     int vertex_idx = hdData.heat_sample_vertices[i];
+  //     current_heat(vertex_idx, 0) = get_heat(hdData, vertex_idx);
+  //   }
+  // };
 
   // NOTE: this approach assumes, that all triangles lie completely within the texture. (No triangles wrap around the outside.)
   // I note this here, because lscm sometimes yields uv-coordinates that exceed the [0, 1] bounds. (They can be negative and their absolute value can exceed 1.)
@@ -426,9 +439,6 @@ int main(int argc, char *argv[])
       double heat1 = get_heat(hdData, v1_idx);
       double heat2 = get_heat(hdData, v2_idx);
       double heat3 = get_heat(hdData, v3_idx);
-      // if (heat1 > 1.0) { std::cout << "encountered excessive heat: " << heat1 << std::endl; }
-      // if (heat2 > 1.0) { std::cout << "encountered excessive heat: " << heat2 << std::endl; }
-      // if (heat3 > 1.0) { std::cout << "encountered excessive heat: " << heat3 << std::endl; }
       for (int j = 0; j < iSData.mapped_by_triangle[i].size(); j++)
       {
         int original_idx = iSData.mapped_by_triangle[i][j];
@@ -441,10 +451,7 @@ int main(int argc, char *argv[])
 
         double heat = heat1*p[0] + heat2*p[1] + heat3*p[2];
         heat = std::max(std::min(heat, 1.0), 0.0);
-        // std::cout << "heat: " << heat << std::endl;
         if (p[0] + p[1] + p[2] > 1.0) { std::cout << "encountered excessive barycentric coordinates: (" << p[0] << ", " << p[1] << ", " << p[2] << ") => " << p[0] + p[1] + p[2] << std::endl; }
-        // if (heat > 1.0) { std::cout << "encountered excessive heat: " << heat << std::endl; }
-        // if (heat < 0.0) { std::cout << "encountered weird heat: " << heat << std::endl; }
         glm::vec3 C;
         polyscope::render::ValueColorMap cmap = polyscope::render::engine->getColorMap(cmaps[selected_cmap]);
         C = cmap.getValue(heat);
@@ -478,17 +485,16 @@ int main(int argc, char *argv[])
       U(index, 0) = c0;
       U(index, 1) = c1;
       U(index, 2) = c2;
-      // std::cout << "Set mesh point " << i << std::endl;
     }
   };
 
   // update entire mesh
   auto refresh_coarse_mesh = [&]()
   {
-    if (psCoarseMesh != nullptr)
-    {
-      // polyscope::unre
-    }
+    // if (psCoarseMesh != nullptr)
+    // {
+    //   // polyscope::unregister...
+    // }
     // TODO: update connectivity
     psCoarseMesh  = polyscope::registerSurfaceMesh("coarse mesh", U, H);
     init_viewer_data();
@@ -507,52 +513,72 @@ int main(int argc, char *argv[])
     ImGui::Separator();
     if(ImGui::SliderInt("remaining vertices", &coarsen_to_n_vertices, min_n_vertices, iSData.inputMesh->nVertices()))
     {
-      do_texture_update = true;
+      do_intrinsics_recovery = true;
+      if (triang_map->isEnabled()) {
+        is_heat_map_up_to_date = false;
+        do_triang_texture_update = true;
+      } else if(heat_map->isEnabled()) {
+        is_triang_map_up_to_date = false;
+        do_diffuse = true;
+        do_heat_texture_update = true;
+      }
     }
     if (ImGui::Button("Add Vertex"))
     {
-        coarsen_to_n_vertices = std::max(std::min(coarsen_to_n_vertices + 1, (int) iSData.inputMesh->nVertices()), min_n_vertices);
-        do_texture_update = true;
+      coarsen_to_n_vertices = std::max(std::min(coarsen_to_n_vertices + 1, (int) iSData.inputMesh->nVertices()), min_n_vertices);
+      do_intrinsics_recovery = true;
+      if (triang_map->isEnabled()) {
+        is_heat_map_up_to_date = false;
+        do_triang_texture_update = true;
+      } else if(heat_map->isEnabled()) {
+        is_triang_map_up_to_date = false;
+        do_diffuse = true;
+        do_heat_texture_update = true;
+      }
     }
     ImGui::SameLine();
     if (ImGui::Button("Remove Vertex"))
     {
-        coarsen_to_n_vertices = std::max(std::min(coarsen_to_n_vertices - 1, (int) iSData.inputMesh->nVertices()), min_n_vertices);
-        do_texture_update = true;
+      coarsen_to_n_vertices = std::max(std::min(coarsen_to_n_vertices - 1, (int) iSData.inputMesh->nVertices()), min_n_vertices);
+      do_intrinsics_recovery = true;
+      if (triang_map->isEnabled()) {
+        is_heat_map_up_to_date = false;
+        do_triang_texture_update = true;
+      } else if(heat_map->isEnabled()) {
+        is_triang_map_up_to_date = false;
+        do_diffuse = true;
+        do_heat_texture_update = true;
+      }
     }
     ImGui::Dummy(ImVec2(0.0f, 10.0f));
     ImGui::Text("Heat Diffusion");
     ImGui::Separator();
     if(ImGui::SliderScalar("Diffusion Stepsize", ImGuiDataType_Double, &diffusion_stepsize, &min_diff_stepsize, &max_diff_stepsize))
     {
-      // TODO: only update heat texture, not only triangulation texture
-      do_texture_update = true;
+      do_diffuse = true;
+      do_heat_texture_update = true;
     }
     if(ImGui::SliderInt("Diffusion Steps", &diffuse_over_n_steps, 0, 100))
     {
-      // TODO: only update heat texture, not only triangulation texture
-      do_texture_update = true;
+      do_diffuse = true;
+      do_heat_texture_update = true;
     }
     if (ImGui::Button("Add Diffusion Step"))
     {
-        diffuse_over_n_steps++;
-        do_texture_update = true;
+      diffuse_over_n_steps++;
+      do_diffuse = true;
+      do_heat_texture_update = true;
     }
     ImGui::SameLine();
     if (ImGui::Button("Remove Diffusion Step"))
     {
         diffuse_over_n_steps = std::max(diffuse_over_n_steps - 1, 0);
-        do_texture_update = true;
-    }
-    ImGui::SameLine();
-    if (ImGui::Checkbox("Auto Diffuse", &do_auto_diffuse))
-    {
-      // do texture update, when enabled
-      if(do_auto_diffuse) { do_texture_update = true; }
+        do_diffuse = true;
+        do_heat_texture_update = true;
     }
     if(ImGui::Combo("Heat color map", &selected_cmap, cmaps, 10))
     {
-      do_texture_update = true;
+      do_heat_texture_update = true;
     }
     ImGui::Dummy(ImVec2(0.0f, 10.0f));
     ImGui::Text("Debug");
@@ -656,10 +682,13 @@ int main(int argc, char *argv[])
         std::cout << "> Vertex " << vertex_idx << " heat: " << hdData.final_heat[i] << std::endl;
       }
     }
-    if (do_texture_update)
+    if (!is_triang_map_up_to_date && triang_map->isEnabled()) { do_triang_texture_update = true; }
+    if (!is_heat_map_up_to_date && heat_map->isEnabled()) { do_diffuse = true; do_heat_texture_update = true; }
+    if (do_intrinsics_recovery)
     {
       // load latest snapshot
-      do_texture_update = false;
+      do_intrinsics_recovery = false;
+      std::cout << "\nUpdate for " << coarsen_to_n_vertices << " remaining vertices:" << std::endl;
       int snapshot_idx = std::floor((iSData.inputMesh->nVertices() - coarsen_to_n_vertices) / snapshot_interval);
       int coarsen_from_n_vertices = iSData.inputMesh->nVertices() - snapshot_idx * snapshot_interval;
       iSData.mapped_by_triangle = mapped_by_triangle_snapshots.at(snapshot_idx);
@@ -673,42 +702,46 @@ int main(int argc, char *argv[])
         int simp_step_mapping_idx = simp_step_mapping_indices.at(iSData.inputMesh->nVertices() - coarsen_to_n_vertices + 1);
         map_current_from_to(iSData, snapshot_mapping_idx, simp_step_mapping_idx);
         // get intrinsic connectivity/edge-lengths for heat diffusion
-        if (do_auto_diffuse) {
-          recover_heat_and_intrinsics_at(simp_step_mapping_idx, hdData, iSData);
-        }
+        recover_heat_and_intrinsics_at(simp_step_mapping_idx, hdData, iSData);
       } else {
         map_current_from(iSData, snapshot_mapping_idx);
         // get intrinsic connectivity/edge-lengths for heat diffusion
-        if (do_auto_diffuse) {
-          recover_heat_and_intrinsics_at(iSData.mapping.size()-1, hdData, iSData);
-        }
+        recover_heat_and_intrinsics_at(iSData.mapping.size()-1, hdData, iSData);
       }
-      if (do_auto_diffuse)
-      {
-        build_heat_sample_indices(hdData, iSData);
-        build_cotan_mass(hdData, iSData);
-        build_cotan_laplacian(hdData, iSData);
-        diffuse_heat(hdData, diffusion_stepsize, diffuse_over_n_steps);
-        update_heat_texture();
-        // NOTE: This is only for the polyscope VertexScalarQuantity. Not needed for the heat texture mapping.
-        update_heat();
-      }
+      build_heat_sample_indices(hdData, iSData);
+      build_cotan_mass(hdData, iSData);
+      build_cotan_laplacian(hdData, iSData);
+      // if (g != nullptr) {
+      //   g = psMesh->addVertexScalarQuantity("ps heat map", current_heat);
+      // }
+    }
+    if (do_diffuse)
+    {
+      do_diffuse = false;
+      diffuse_heat(hdData, diffusion_stepsize, diffuse_over_n_steps);
+      // update_heat()
+    }
+    if (do_triang_texture_update)
+    {
+      do_triang_texture_update = false;
       update_triang_texture();
-      if (q != nullptr) {
-        q->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_triang_texture, polyscope::TextureFormat::RGBA8);
-        // q->setEnabled(true);
-        q->setStyle(polyscope::ParamVizStyle::TEXTURE);
-        q->setCheckerSize(1);
+      if (triang_map != nullptr) {
+        triang_map->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_triang_texture, polyscope::TextureFormat::RGBA8);
+        triang_map->setStyle(polyscope::ParamVizStyle::TEXTURE);
+        triang_map->setCheckerSize(1);
       }
-      if (h != nullptr) {
-        h->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_heat_texture, polyscope::TextureFormat::RGBA8);
-        // h->setEnabled(true);
-        h->setStyle(polyscope::ParamVizStyle::TEXTURE);
-        h->setCheckerSize(1);
+      is_triang_map_up_to_date = true;
+    }
+    if (do_heat_texture_update)
+    {
+      do_heat_texture_update = false;
+      update_heat_texture();
+      if (heat_map != nullptr) {
+        heat_map->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_heat_texture, polyscope::TextureFormat::RGBA8);
+        heat_map->setStyle(polyscope::ParamVizStyle::TEXTURE);
+        heat_map->setCheckerSize(1);
       }
-      if (g != nullptr) {
-        g = psMesh->addVertexScalarQuantity("ps heat map", current_heat);
-      }
+      is_heat_map_up_to_date = true;
     }
   };
 
@@ -726,43 +759,44 @@ int main(int argc, char *argv[])
   diffuse_heat(hdData, diffusion_stepsize, 0);
   update_textures();
   // NOTE: This is only for the polyscope VertexScalarQuantity. Not needed for the heat texture mapping.
-  update_heat();
+  // update_heat();
 
-  std::cout << "\n\nBeginning Simplification..." << std::endl;
-  // while (!iSData.hasConverged && iSData.intrinsicMesh->nVertices() > coarsen_to_n_vertices)
+  progressBar bar;
+  if(!verbose_simplification) {
+    std::cout << "\n\nPerforming Simplification:    ";
+    start_progressBar(bar);
+  } else {
+    std::cout << "\n\nBeginning Simplification..." << std::endl;
+  }
   while (!iSData.hasConverged)
   {
-    // std::cout << "Reducing to " << iSData.intrinsicMesh->nVertices() << " remaining vertices..." << std::endl;
     int step_mapping_idx = iSData.mapping.size();
     // make simplification step
     bool success = iSimp_step(iSData);
-    // if case, because the iSimp step can fail & not introduce any new simplification operations
-    // if(iSData.mapping.size() > step_mapping_idx) { simp_step_mapping_indices.push_back(step_mapping_idx); }
+    // compute coloring & save simplification state index for replays
     if(success) { simp_step_mapping_indices.push_back(step_mapping_idx); compute_coloring(); }
-    if ((iSData.inputMesh->nVertices() - iSData.intrinsicMesh->nVertices()) % snapshot_interval == 0) {
-      std::cout << "Took snapshot at " << iSData.inputMesh->nVertices() - iSData.intrinsicMesh->nVertices() << " removed vertices" << std::endl;
 
-      // snapshot texel mapping state for intrinsic triangulation texture mapping
+    // take snapshot
+    if ((iSData.inputMesh->nVertices() - iSData.intrinsicMesh->nVertices()) % snapshot_interval == 0) {
+      if(verbose_simplification) {
+        std::cout << "Took snapshot at " << iSData.inputMesh->nVertices() - iSData.intrinsicMesh->nVertices() << " removed vertices" << std::endl;
+      }
+
+      // save texel mapping state for intrinsic triangulation texture mapping
       map_current_from(iSData, snapshot_mapping_indices.at(snapshot_mapping_indices.size() - 1));
       mapped_by_triangle_snapshots.push_back(iSData.mapped_by_triangle);
       mapped_points_snapshots.push_back(iSData.mapped_points);
-
       snapshot_mapping_indices.push_back(iSData.mapping.size());
     }
-    // compute_coloring();
-    // TODO: remove after debugging
-    // bool are_edge_lengths_valid = validate_intrinsic_edge_lengths(iSData);
-    // if(!are_edge_lengths_valid) {
-    //   std::cout << RED << "Found invalid edge-lengths after step_mapping_idx: " << step_mapping_idx << RESET << std::endl;
-    //   iSData.hasConverged = true;
-    // }
+    if(!verbose_simplification)
+    {
+      double progress_percent = ((double) iSData.inputMesh->nVertices() - iSData.intrinsicMesh->nVertices()) / ((double) iSData.inputMesh->nVertices());
+      progress_progressBar(bar, progress_percent);
+    }
   }
+  if(!verbose_simplification) { finish_progressBar(bar); }
   // refresh_coarse_mesh(); //TODO: update coarse mesh
   min_n_vertices = iSData.intrinsicMesh->nVertices();
-
-  // coarsen_to_n_vertices = 5;
-  // map_registered(iSData, coarsen_to_n_vertices);
-  // update_textures();
 
   // psCoarseMesh  = polyscope::registerSurfaceMesh("coarse mesh", U, H); // TODO: visualize coarse mesh
   psMesh = polyscope::registerSurfaceMesh("input mesh", V, F);
@@ -774,26 +808,19 @@ int main(int argc, char *argv[])
       parameterization(3 * iF + iC) = glm::vec2{UV(UF(iF, iC), 0), UV(UF(iF, iC), 1)};
     }
   }
-  q = psMesh->addParameterizationQuantity("intrinsic triangulation", parameterization);
+  triang_map = psMesh->addParameterizationQuantity("intrinsic triangulation", parameterization);
 
-  q->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_triang_texture, polyscope::TextureFormat::RGBA8);
-  q->setEnabled(true);
-  q->setStyle(polyscope::ParamVizStyle::TEXTURE);
-  q->setCheckerSize(1);
+  triang_map->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_triang_texture, polyscope::TextureFormat::RGBA8);
+  triang_map->setEnabled(true);
+  triang_map->setStyle(polyscope::ParamVizStyle::TEXTURE);
+  triang_map->setCheckerSize(1);
 
-  h = psMesh->addParameterizationQuantity("heat map", parameterization);
+  heat_map = psMesh->addParameterizationQuantity("heat map", parameterization);
+  heat_map->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_heat_texture, polyscope::TextureFormat::RGBA8);
+  heat_map->setStyle(polyscope::ParamVizStyle::TEXTURE);
+  heat_map->setCheckerSize(1);
 
-  h->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_heat_texture, polyscope::TextureFormat::RGBA8);
-  // h->setEnabled(true);
-  h->setStyle(polyscope::ParamVizStyle::TEXTURE);
-  h->setCheckerSize(1);
-
-  g = psMesh->addVertexScalarQuantity("ps heat map", current_heat);
-
-  // g->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_heat_texture, polyscope::TextureFormat::RGBA8);
-  // // h->setEnabled(true);
-  // g->setStyle(polyscope::ParamVizStyle::TEXTURE);
-  // g->setCheckerSize(1);
+  // g = psMesh->addVertexScalarQuantity("ps heat map", current_heat);
 
   polyscope::state::userCallback = callback;
   polyscope::show();
