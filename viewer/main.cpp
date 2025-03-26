@@ -40,13 +40,14 @@ int main(int argc, char *argv[])
   double max_diff_stepsize = 0.01;
 
   // UI TRIGGERS/STATE
-  bool do_intrinsics_recovery = false;
+  bool do_intrinsics_recovery = true;
   bool do_diffuse = false;
   bool do_triang_texture_update = false;
   bool do_heat_texture_update = false;
 
   bool is_triang_map_up_to_date = true;
-  bool is_heat_map_up_to_date = true;
+  bool is_heat_map_up_to_date = false;
+  bool is_heat_map_initialized = false;
 
   // POLYSCOPE
   polyscope::SurfaceMesh* psMesh;
@@ -172,7 +173,7 @@ int main(int argc, char *argv[])
   bool virgin = true;
   bool view_constraints = true;
   bool view_all_points = false;
-  int selected_cmap = 0;
+  int selected_cmap = 9;
   const char* cmaps[]{"coolwarm", "reds", "blues", "viridis", "pink-green", "phase", "spectral", "rainbow", "jet", "turbo"};
   bool optimise = false;
 
@@ -225,7 +226,7 @@ int main(int argc, char *argv[])
   ).finished();
 
   polyscope::init();
-  std::cout << R"(  Intrinsic Simplification Settings:
+  std::cout << RESET << R"(  Intrinsic Simplification Settings:
     Mesh:                       )" << filename << R"(
     texture size:               )" << TEXTURE_WIDTH << "x" << TEXTURE_HEIGHT << R"(px
     snapshot interval:          every )" << snapshot_interval << R"( vertex removals
@@ -558,7 +559,7 @@ int main(int argc, char *argv[])
       do_diffuse = true;
       do_heat_texture_update = true;
     }
-    if(ImGui::SliderInt("Diffusion Steps", &diffuse_over_n_steps, 0, 100))
+    if(ImGui::SliderInt("Diffusion Steps", &diffuse_over_n_steps, 0, 200))
     {
       do_diffuse = true;
       do_heat_texture_update = true;
@@ -682,6 +683,7 @@ int main(int argc, char *argv[])
         std::cout << "> Vertex " << vertex_idx << " heat: " << hdData.final_heat[i] << std::endl;
       }
     }
+    if (!is_heat_map_initialized) { is_heat_map_initialized = true; do_heat_texture_update = true; }
     if (!is_triang_map_up_to_date && triang_map->isEnabled()) { do_triang_texture_update = true; }
     if (!is_heat_map_up_to_date && heat_map->isEnabled()) { do_diffuse = true; do_heat_texture_update = true; }
     if (do_intrinsics_recovery)
@@ -756,8 +758,7 @@ int main(int argc, char *argv[])
   init_viewer_data();
   compute_coloring();
 
-  diffuse_heat(hdData, diffusion_stepsize, 0);
-  update_textures();
+  update_triang_texture();
   // NOTE: This is only for the polyscope VertexScalarQuantity. Not needed for the heat texture mapping.
   // update_heat();
 
@@ -772,7 +773,7 @@ int main(int argc, char *argv[])
   {
     int step_mapping_idx = iSData.mapping.size();
     // make simplification step
-    bool success = iSimp_step(iSData);
+    bool success = iSimp_step(iSData, verbose_simplification);
     // compute coloring & save simplification state index for replays
     if(success) { simp_step_mapping_indices.push_back(step_mapping_idx); compute_coloring(); }
 

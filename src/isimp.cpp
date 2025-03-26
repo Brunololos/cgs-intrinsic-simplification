@@ -91,22 +91,22 @@ bool iSimp_step(iSimpData& data, const bool verbose)
   vertex_idx = current->first;
   ice = current->second;
 
-  if(std::isinf(ice)) { std::cout << "Converged!" << std::endl; data.hasConverged = true; return false; }
+  if(std::isinf(ice)) { if(verbose) { std::cout << "Converged!" << std::endl; } data.hasConverged = true; return false; }
   if (data.intrinsicMesh->vertex(vertex_idx).isDead()) { return false; }
-  could_flatten = flatten_vertex(data, vertex_idx);
+  could_flatten = flatten_vertex(data, vertex_idx, verbose);
   if(could_flatten)
   {
-    could_flip_to_deg3 = flip_vertex_to_deg3(data, vertex_idx);
+    could_flip_to_deg3 = flip_vertex_to_deg3(data, vertex_idx, verbose);
     if(could_flip_to_deg3)
     {
       // save neighbors, because we cant iterate over vertex neighborhood after vertex removal
       temp_neighbors.clear();
       for (gcs::Vertex neighbor : data.intrinsicMesh->vertex(vertex_idx).adjacentVertices()) { temp_neighbors.push_back(neighbor); }
-      could_remove = remove_vertex(data, vertex_idx);
+      could_remove = remove_vertex(data, vertex_idx, verbose);
       // try to enforce delaunay by iterating over all edges and flipping them, if necessary
       // NOTE: one could try to be smarter and only iterate over edges incident to the changed vertices/edges
       // NOTE2: I tried to be smarter, but not iterating over all edges yielded worse results
-      flip_to_delaunay(data);
+      flip_to_delaunay(data, verbose);
     }
     else if(verbose) { std::cout << "Flipping Vertex " + std::to_string(vertex_idx) + " to degree 3 failed!" << std::endl; }
 
@@ -186,7 +186,8 @@ void recover_heat_and_intrinsics_at(const int mapping_idx, heatDiffData& hdData,
         replay_intrinsic_flip(data, data.mapping[i]->reduced_primitive_idx());
         break;
       case SIMP_OP::V_FLATTEN:
-        replay_vertex_flattening_with_heat(data, hdData, data.mapping[i]->reduced_primitive_idx());
+        replay_vertex_flattening_with_heat(data, hdData, data.mapping[i]->reduced_primitive_idx()); // TODO: pass the scaling factor
+        // replay_vertex_flattening_with_heat(data, hdData, data.mapping[i]->reduced_primitive_idx(), data.mapping[i]->get_u()); // TODO: pass the scaling factor
         break;
       case SIMP_OP::V_REMOVAL:
         replay_vertex_removal_with_heat(data, hdData, data.mapping[i]->reduced_primitive_idx());

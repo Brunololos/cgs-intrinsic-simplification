@@ -22,21 +22,24 @@ void map_current_from_to(iSimpData& iSData, const int from_mapping_idx, const in
 
 // simplification operations (returns whether the operation could be performed/was successful)
 bool is_edge_flippable(const iSimpData& iSData, const Quad2D& quad, const gcs::Edge edge);
-bool flip_intrinsic(iSimpData& iSData, const gcs::Edge edge);
-bool flatten_vertex(iSimpData& iSData, const int vertex_idx);
-bool remove_vertex(iSimpData& iSData, const int vertex_idx);
-void flip_to_delaunay(iSimpData& iSData);
-void flip_to_delaunay(iSimpData& iSData, const std::vector<gcs::Vertex>& vertices);
-bool flip_vertex_to_deg3(iSimpData& iSData, const int vertex_idx);
+double replay_compute_flattening_factor(const iSimpData& iSData, const gcs::Vertex v, const bool verbose=false);
+double compute_flattening_factor(const iSimpData& iSData, const gcs::Vertex v, const bool verbose);
+bool flip_intrinsic(iSimpData& iSData, const gcs::Edge edge, const bool verbose=false);
+bool flatten_vertex(iSimpData& iSData, const int vertex_idx, const bool verbose=false);
+bool remove_vertex(iSimpData& iSData, const int vertex_idx, const bool verbose=false);
+void flip_to_delaunay(iSimpData& iSData, const bool verbose=false);
+void flip_to_delaunay(iSimpData& iSData, const std::vector<gcs::Vertex>& vertices, const bool verbose=false);
+bool flip_vertex_to_deg3(iSimpData& iSData, const int vertex_idx, const bool verbose=false);
 void rotate_reference_edge(iSimpData& iSData, const gcs::Vertex& vertex);
 
 PolarVector2D next_error_vector(const iSimpData& iSData, const double alpha, const gcs::Vertex vertex, const gcs::Vertex neighbor, bool for_T_minus);
-double intrinsic_curvature_error(const iSimpData& iSData, const gcs::Vertex vertex);
+double intrinsic_curvature_error(const iSimpData& iSData, const gcs::Vertex vertex, const bool verbose=false);
 
 // replay operations for intrinsics recovery after initial simplification
 void replay_intrinsic_flip(iSimpData& iSData, const int edge_idx);
 void replay_vertex_flattening(iSimpData& iSData, const int vertex_idx);
 void replay_vertex_flattening_with_heat(iSimpData& iSData, heatDiffData& hdData, const int vertex_idx);
+void replay_vertex_flattening_with_heat(iSimpData& iSData, heatDiffData& hdData, const int vertex_idx, const double u);
 void replay_vertex_removal(iSimpData& iSData, const int vertex_idx);
 void replay_vertex_removal_with_heat(iSimpData& iSData, heatDiffData& hdData, const int vertex_idx);
 

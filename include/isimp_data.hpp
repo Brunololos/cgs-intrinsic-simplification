@@ -88,6 +88,13 @@ class Mapping_operation {
             std::cout << "ALERT! Called reduced_primitive_idx of superclass!" << std::endl;
             return -1;
         }
+
+        // workaround - only needed for Vertex Flattening
+        virtual int get_u()
+        {
+            std::cout << "ALERT! Called get_u of superclass!" << std::endl;
+            return -1;
+        }
 };
 
 // intrinsic flip:
@@ -208,6 +215,7 @@ class Edge_Flip : public Mapping_operation {
     }
 
     int reduced_primitive_idx() { return edge_idx; }
+    int get_u() { exit(-1); }
 };
 
 // mapping for vertex flattening
@@ -251,6 +259,7 @@ class Vertex_Flattening : public Mapping_operation {
     }
 
     int reduced_primitive_idx() { return vertex_idx; }
+    int get_u() { return v_u; }
 };
 
 // mapping for vertex removal
@@ -398,4 +407,5 @@ class Vertex_Removal : public Mapping_operation {
     }
 
     int reduced_primitive_idx() { return vertex_idx; }
+    int get_u() { exit(-1); }
 };
