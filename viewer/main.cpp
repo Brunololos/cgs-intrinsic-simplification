@@ -27,12 +27,13 @@ int main(int argc, char *argv[])
 {
   // PROGRAM SETTINGS
   std::string filename = "../../meshes/spot.obj";
-  int TEXTURE_WIDTH = 2000;
-  int TEXTURE_HEIGHT = 2000;
+  int TEXTURE_WIDTH = 1000;
+  int TEXTURE_HEIGHT = 1000;
   int snapshot_interval = 50;
   bool verbose_simplification = false;
 
   // UI SETTINGS
+  int coarsen_to_mapping_idx = 0;
   int coarsen_to_n_vertices;
   int diffuse_over_n_steps;
   double diffusion_stepsize;
@@ -62,7 +63,7 @@ int main(int argc, char *argv[])
   std::vector<unsigned char> ps_heat_texture = std::vector<unsigned char>();
 
   // store all colorings for all different simplification states (for each vertex removal).
-  std::vector<Eigen::VectorXi> colorings;
+  // std::vector<Eigen::VectorXi> colorings;
 
   // SIMPLIFICATION
   Eigen::MatrixXd V, UV, NV;
@@ -158,7 +159,7 @@ int main(int argc, char *argv[])
   coarsen_to_n_vertices = V.rows();
   diffuse_over_n_steps = 0;
   diffusion_stepsize = 0.005;
-  colorings = std::vector<Eigen::VectorXi>();
+  // colorings = std::vector<Eigen::VectorXi>();
   mapped_by_triangle_snapshots = std::vector<std::vector<std::vector<int>>>();
   mapped_points_snapshots = std::vector<std::vector<BarycentricPoint>>();
   snapshot_mapping_indices = std::vector<int>();
@@ -382,7 +383,40 @@ int main(int argc, char *argv[])
 
       Coloring(i) = color_idx;
     }
-    colorings.push_back(Coloring);
+    // colorings.push_back(Coloring);
+  };
+
+  auto compute_and_get_coloring = [&]() {
+    int num_colors = CM.rows() - 1;
+    Eigen::VectorXi Coloring = Eigen::VectorXi::Zero(iSData.F.rows());
+    for (int i = 0; i < iSData.inputMesh->nFaces(); i++)
+    {
+      // Determine color
+      int seeded_color_idx = (i % (num_colors - 1));
+      gcs::Face current_face = iSData.recoveredMesh->face(i);
+      if (current_face.isDead()) { continue; }
+
+      int color_idx = 0;
+      for (int j=0; j<num_colors-1; j++)
+      {
+        bool valid = true;
+        int current_color_idx = ((seeded_color_idx + j) % (num_colors - 1)) + 1;
+        for(gcs::Face neighbor : current_face.adjacentFaces())
+        {
+          int neighbor_idx = neighbor.getIndex();
+          int neighbor_color_idx = Coloring(neighbor_idx);
+          if (current_color_idx == neighbor_color_idx)
+          {
+            valid = false;
+            break;
+          }
+        }
+        if (valid) { color_idx = current_color_idx; break; }
+      }
+
+      Coloring(i) = color_idx;
+    }
+    return Coloring;
   };
 
   const auto &reset_triang_texture = [&]()
@@ -404,6 +438,7 @@ int main(int argc, char *argv[])
     int num_triangles = iSData.mapped_by_triangle.size();
     int num_colors = CM.rows() - 1;
     int n_removals = iSData.inputMesh->nVertices() - coarsen_to_n_vertices;
+    Eigen::VectorXi coloring = compute_and_get_coloring();
 
     // draw texture
     for (int i = 0; i < num_triangles; i++)
@@ -412,9 +447,9 @@ int main(int argc, char *argv[])
       {
         int original_idx = iSData.mapped_by_triangle[i][j];
         TexCoord texcoord = iSData.tracked_texcoords[original_idx];
-        ps_triang_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 0] = CM(colorings[n_removals](i), 0) * 255;
-        ps_triang_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 1] = CM(colorings[n_removals](i), 1) * 255;
-        ps_triang_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 2] = CM(colorings[n_removals](i), 2) * 255;
+        ps_triang_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 0] = CM(coloring(i), 0) * 255;
+        ps_triang_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 1] = CM(coloring(i), 1) * 255;
+        ps_triang_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 2] = CM(coloring(i), 2) * 255;
         ps_triang_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 3] = 255;
       }
     }
@@ -512,9 +547,34 @@ int main(int argc, char *argv[])
   auto callback = [&]() {
     ImGui::Text("Intrinsic Simplification");
     ImGui::Separator();
+    if(ImGui::SliderInt("mapping index", &coarsen_to_mapping_idx, 0, iSData.mapping.size()))
+    {
+      do_intrinsics_recovery = true;
+      int n_removals = 0;
+      for (int i=0; i<=coarsen_to_mapping_idx && i<iSData.mapping.size(); i++) {
+        if (iSData.mapping[i]->op_type == SIMP_OP::V_REMOVAL) { n_removals++; }
+      }
+      coarsen_to_n_vertices = iSData.inputMesh->nVertices() - n_removals;
+      if (triang_map->isEnabled()) {
+        is_heat_map_up_to_date = false;
+        do_triang_texture_update = true;
+      } else if(heat_map->isEnabled()) {
+        is_triang_map_up_to_date = false;
+        do_diffuse = true;
+        do_heat_texture_update = true;
+      }
+    }
     if(ImGui::SliderInt("remaining vertices", &coarsen_to_n_vertices, min_n_vertices, iSData.inputMesh->nVertices()))
     {
       do_intrinsics_recovery = true;
+      if (simp_step_mapping_indices.size() > iSData.inputMesh->nVertices() - coarsen_to_n_vertices + 1)
+      {
+        int target_removal_idx = iSData.inputMesh->nVertices() - coarsen_to_n_vertices;
+        coarsen_to_mapping_idx = simp_step_mapping_indices.at(iSData.inputMesh->nVertices() - coarsen_to_n_vertices + 1);
+      } else {
+        coarsen_to_mapping_idx = iSData.mapping.size();
+      }
+
       if (triang_map->isEnabled()) {
         is_heat_map_up_to_date = false;
         do_triang_texture_update = true;
@@ -528,6 +588,13 @@ int main(int argc, char *argv[])
     {
       coarsen_to_n_vertices = std::max(std::min(coarsen_to_n_vertices + 1, (int) iSData.inputMesh->nVertices()), min_n_vertices);
       do_intrinsics_recovery = true;
+      if (simp_step_mapping_indices.size() > iSData.inputMesh->nVertices() - coarsen_to_n_vertices + 1)
+      {
+        int target_removal_idx = iSData.inputMesh->nVertices() - coarsen_to_n_vertices;
+        coarsen_to_mapping_idx = simp_step_mapping_indices.at(iSData.inputMesh->nVertices() - coarsen_to_n_vertices + 1);
+      } else {
+        coarsen_to_mapping_idx = iSData.mapping.size();
+      }
       if (triang_map->isEnabled()) {
         is_heat_map_up_to_date = false;
         do_triang_texture_update = true;
@@ -542,6 +609,68 @@ int main(int argc, char *argv[])
     {
       coarsen_to_n_vertices = std::max(std::min(coarsen_to_n_vertices - 1, (int) iSData.inputMesh->nVertices()), min_n_vertices);
       do_intrinsics_recovery = true;
+      if (simp_step_mapping_indices.size() > iSData.inputMesh->nVertices() - coarsen_to_n_vertices + 1)
+      {
+        int target_removal_idx = iSData.inputMesh->nVertices() - coarsen_to_n_vertices;
+        coarsen_to_mapping_idx = simp_step_mapping_indices.at(iSData.inputMesh->nVertices() - coarsen_to_n_vertices + 1);
+      } else {
+        coarsen_to_mapping_idx = iSData.mapping.size();
+      }
+      if (triang_map->isEnabled()) {
+        is_heat_map_up_to_date = false;
+        do_triang_texture_update = true;
+      } else if(heat_map->isEnabled()) {
+        is_triang_map_up_to_date = false;
+        do_diffuse = true;
+        do_heat_texture_update = true;
+      }
+    }
+    if (ImGui::Button("Do Single Operation"))
+    {
+      coarsen_to_mapping_idx = std::max(std::min(coarsen_to_mapping_idx + 1, (int) iSData.mapping.size()), 0);
+      do_intrinsics_recovery = true;
+      int n_removals = 0;
+      for (int i=0; i<=coarsen_to_mapping_idx && i<iSData.mapping.size(); i++) {
+        if (iSData.mapping[i]->op_type == SIMP_OP::V_REMOVAL) { n_removals++; }
+      }
+      coarsen_to_n_vertices = iSData.inputMesh->nVertices() - n_removals;
+      if (triang_map->isEnabled()) {
+        is_heat_map_up_to_date = false;
+        do_triang_texture_update = true;
+      } else if(heat_map->isEnabled()) {
+        is_triang_map_up_to_date = false;
+        do_diffuse = true;
+        do_heat_texture_update = true;
+      }
+
+      if (coarsen_to_mapping_idx < iSData.mapping.size()) {
+        std::cout << "Performing ";
+        int prim_idx = iSData.mapping[coarsen_to_mapping_idx]->reduced_primitive_idx();
+        switch(iSData.mapping[coarsen_to_mapping_idx]->op_type)
+        {
+          default:
+          case SIMP_OP::E_FLIP:
+            std::cout << "EDGE FLIP of Edge: " << prim_idx << "(" << iSData.recoveredMesh->edge(prim_idx).firstVertex().getIndex() << ", " << iSData.recoveredMesh->edge(prim_idx).secondVertex().getIndex() << ")" << std::endl;
+            break;
+          case SIMP_OP::V_FLATTEN:
+            std::cout << "VERTEX FLATTENING of Vertex: " << prim_idx << std::endl;
+            break;
+          case SIMP_OP::V_REMOVAL:
+            std::cout << "VERTEX REMOVAL of Vertex: " << prim_idx << std::endl;
+            break;
+        }
+      }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Revert Single Operation"))
+    {
+      coarsen_to_mapping_idx = std::max(std::min(coarsen_to_mapping_idx - 1, (int) iSData.mapping.size()), 0);
+      do_intrinsics_recovery = true;
+      int n_removals = 0;
+      for (int i=0; i<=coarsen_to_mapping_idx && i<iSData.mapping.size(); i++) {
+        if (iSData.mapping[i]->op_type == SIMP_OP::V_REMOVAL) { n_removals++; }
+      }
+      coarsen_to_n_vertices = iSData.inputMesh->nVertices() - n_removals;
       if (triang_map->isEnabled()) {
         is_heat_map_up_to_date = false;
         do_triang_texture_update = true;
@@ -695,21 +824,18 @@ int main(int argc, char *argv[])
       int coarsen_from_n_vertices = iSData.inputMesh->nVertices() - snapshot_idx * snapshot_interval;
       iSData.mapped_by_triangle = mapped_by_triangle_snapshots.at(snapshot_idx);
       iSData.mapped_points = mapped_points_snapshots.at(snapshot_idx);
-
-      // map from latest snapshot to desired simplification state & recover necessary information like connectivity & heat (those are replayed from the initial state as opposed to the latest snapshot)
       int snapshot_mapping_idx = snapshot_mapping_indices.at(snapshot_idx);
-      if (simp_step_mapping_indices.size() > iSData.inputMesh->nVertices() - coarsen_to_n_vertices + 1)
+      if (coarsen_to_mapping_idx < iSData.mapping.size())
       {
-        int target_removal_idx = iSData.inputMesh->nVertices() - coarsen_to_n_vertices;
-        int simp_step_mapping_idx = simp_step_mapping_indices.at(iSData.inputMesh->nVertices() - coarsen_to_n_vertices + 1);
-        map_current_from_to(iSData, snapshot_mapping_idx, simp_step_mapping_idx);
+        map_current_from_to(iSData, snapshot_mapping_idx, coarsen_to_mapping_idx+1);
         // get intrinsic connectivity/edge-lengths for heat diffusion
-        recover_heat_and_intrinsics_at(simp_step_mapping_idx, hdData, iSData);
+        recover_heat_and_intrinsics_at(coarsen_to_mapping_idx, hdData, iSData);
       } else {
         map_current_from(iSData, snapshot_mapping_idx);
         // get intrinsic connectivity/edge-lengths for heat diffusion
         recover_heat_and_intrinsics_at(iSData.mapping.size()-1, hdData, iSData);
       }
+
       build_heat_sample_indices(hdData, iSData);
       build_cotan_mass(hdData, iSData);
       build_cotan_laplacian(hdData, iSData);
@@ -756,7 +882,7 @@ int main(int argc, char *argv[])
   simp_step_mapping_indices.push_back(0);
 
   init_viewer_data();
-  compute_coloring();
+  // compute_coloring();
 
   update_triang_texture();
   // NOTE: This is only for the polyscope VertexScalarQuantity. Not needed for the heat texture mapping.
@@ -775,7 +901,7 @@ int main(int argc, char *argv[])
     // make simplification step
     bool success = iSimp_step(iSData, verbose_simplification);
     // compute coloring & save simplification state index for replays
-    if(success) { simp_step_mapping_indices.push_back(step_mapping_idx); compute_coloring(); }
+    if(success) { simp_step_mapping_indices.push_back(step_mapping_idx); /* compute_coloring(); */ }
 
     // take snapshot
     if ((iSData.inputMesh->nVertices() - iSData.intrinsicMesh->nVertices()) % snapshot_interval == 0) {

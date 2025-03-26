@@ -324,9 +324,20 @@ double constrain(const double number, const double low, const double high)
 
 bool satisfies_triangle_ineq(const double l_ij, const double l_ik, const double l_jk, const double epsilon)
 {
-  if ((l_ij >= l_ik + l_jk)
-  ||  (l_ik >= l_ij + l_jk)
-  ||  (l_jk >= l_ij + l_ik))
+  if ((l_ij + epsilon >= l_ik + l_jk)
+  ||  (l_ik + epsilon >= l_ij + l_jk)
+  ||  (l_jk + epsilon >= l_ij + l_ik))
+  {
+    return false;
+  }
+  return true;
+}
+
+bool is_non_degenerate(const double l_ij, const double l_ik, const double l_jk)
+{
+  if ((1.1*l_ij >= l_ik + l_jk)
+  ||  (1.1*l_ik >= l_ij + l_jk)
+  ||  (1.1*l_jk >= l_ij + l_ik))
   {
     return false;
   }

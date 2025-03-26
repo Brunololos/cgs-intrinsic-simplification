@@ -22,8 +22,7 @@ void map_current_from_to(iSimpData& iSData, const int from_mapping_idx, const in
 
 // simplification operations (returns whether the operation could be performed/was successful)
 bool is_edge_flippable(const iSimpData& iSData, const Quad2D& quad, const gcs::Edge edge);
-double replay_compute_flattening_factor(const iSimpData& iSData, const gcs::Vertex v, const bool verbose=false);
-double compute_flattening_factor(const iSimpData& iSData, const gcs::Vertex v, const bool verbose);
+double compute_flattening_factor(const Eigen::VectorXd& L, const gcs::Vertex v, const bool verbose);
 bool flip_intrinsic(iSimpData& iSData, const gcs::Edge edge, const bool verbose=false);
 bool flatten_vertex(iSimpData& iSData, const int vertex_idx, const bool verbose=false);
 bool remove_vertex(iSimpData& iSData, const int vertex_idx, const bool verbose=false);

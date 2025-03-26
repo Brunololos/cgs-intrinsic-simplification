@@ -58,5 +58,6 @@ double truncate(const double number, const int decimals=6);
 double constrain(const double number, const double low=0.0, const double high=1.0);
 
 bool satisfies_triangle_ineq(const double l_ij, const double l_ik, const double l_jk, const double epsilon=1e-6);
+bool is_non_degenerate(const double l_ij, const double l_ik, const double l_jk);
 
 #endif

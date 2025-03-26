@@ -108,7 +108,8 @@ bool iSimp_step(iSimpData& data, const bool verbose)
       // NOTE2: I tried to be smarter, but not iterating over all edges yielded worse results
       flip_to_delaunay(data, verbose);
     }
-    else if(verbose) { std::cout << "Flipping Vertex " + std::to_string(vertex_idx) + " to degree 3 failed!" << std::endl; }
+    // NOTE: This triggers too often to log, and most of the time it's totally valid, that a vertex cannot be flattened
+    // else if(verbose) { std::cout << "Flipping Vertex " + std::to_string(vertex_idx) + " to degree 3 failed!" << std::endl; }
 
   }
   else if(verbose) { std::cout << "Vertex Flattening of Vertex " + std::to_string(vertex_idx) + " failed!" << std::endl; }
@@ -186,8 +187,7 @@ void recover_heat_and_intrinsics_at(const int mapping_idx, heatDiffData& hdData,
         replay_intrinsic_flip(data, data.mapping[i]->reduced_primitive_idx());
         break;
       case SIMP_OP::V_FLATTEN:
-        replay_vertex_flattening_with_heat(data, hdData, data.mapping[i]->reduced_primitive_idx()); // TODO: pass the scaling factor
-        // replay_vertex_flattening_with_heat(data, hdData, data.mapping[i]->reduced_primitive_idx(), data.mapping[i]->get_u()); // TODO: pass the scaling factor
+        replay_vertex_flattening_with_heat(data, hdData, data.mapping[i]->reduced_primitive_idx());
         break;
       case SIMP_OP::V_REMOVAL:
         replay_vertex_removal_with_heat(data, hdData, data.mapping[i]->reduced_primitive_idx());
