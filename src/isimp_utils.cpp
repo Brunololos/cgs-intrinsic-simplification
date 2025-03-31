@@ -902,7 +902,6 @@ double intrinsic_curvature_error(const iSimpData &iSData, const gcs::Vertex vert
     L_opt.insert({idx, iSData.L[idx]});
   }
 
-  // TODO:
   if (L_opt.size() == 2)
   {
     if (verbose)
