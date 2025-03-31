@@ -9,6 +9,8 @@
 
 enum class SIMP_OP;
 class Mapping_operation;
+struct heatRedist;
+enum class CircumcentricShape { ZERO, TRIANGLE, CHOPPED_TRIANGLE, RECTANGLE, CHOPPED_QUADRILATERAL };
 
 struct customLess
 {
@@ -52,6 +54,9 @@ struct iSimpData {
 
   // bijective mapping consisting of a sequence of atomic mapping operations
   std::vector<std::unique_ptr<Mapping_operation>> mapping;
+  // workaround to unredistribute heat (because the coarse-to-fine mapping is not implemented)
+  // TODO: should be removed & replaced by another routine, when the inverse mapping direction is implemented
+  std::vector<heatRedist> heat_mapping;
   // points tracked through the bijective mapping from the fine to the coarse triangulation
   std::vector<BarycentricPoint> tracked_points;
   std::vector<BarycentricPoint> mapped_points;
@@ -86,13 +91,6 @@ class Mapping_operation {
         virtual int reduced_primitive_idx()
         {
             std::cout << "ALERT! Called reduced_primitive_idx of superclass!" << std::endl;
-            return -1;
-        }
-
-        // workaround - only needed for Vertex Flattening
-        virtual int get_u()
-        {
-            std::cout << "ALERT! Called get_u of superclass!" << std::endl;
             return -1;
         }
 };
@@ -215,7 +213,6 @@ class Edge_Flip : public Mapping_operation {
     }
 
     int reduced_primitive_idx() { return edge_idx; }
-    int get_u() { exit(-1); }
 };
 
 // mapping for vertex flattening
@@ -259,7 +256,6 @@ class Vertex_Flattening : public Mapping_operation {
     }
 
     int reduced_primitive_idx() { return vertex_idx; }
-    int get_u() { return v_u; }
 };
 
 // mapping for vertex removal
@@ -407,5 +403,13 @@ class Vertex_Removal : public Mapping_operation {
     }
 
     int reduced_primitive_idx() { return vertex_idx; }
-    int get_u() { exit(-1); }
+
+};
+// used to reverse the heat distribution during the simplification
+struct heatRedist {
+    int vertex_idx;
+    double vertex_mass;
+    Eigen::VectorXi neighbor_idcs;
+    Eigen::VectorXd neighbor_mass;
+    Eigen::VectorXd neighbor_mass_delta;
 };

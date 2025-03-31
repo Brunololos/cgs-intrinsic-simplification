@@ -220,11 +220,10 @@ Point2D to_explicit(const BarycentricPoint& bary_point, const Point2D& A, const 
 }
 
 // TODO: one could also store the values that do not depend on point in the simplification operation
+// TODO: this can be vectorized to compute multiple barycentric coordinates at once.
 // Barycentric point calculation adopted from: https://gamedev.stackexchange.com/questions/23743/whats-the-most-efficient-way-to-find-barycentric-coordinates
 BarycentricPoint to_barycentric(const Point2D& point, const Point2D& A, const Point2D& B, const Point2D& C)
 {
-  // TODO: remove print
-  // std::cout << "making barycentric, explicit point " << to_str(point) << " as convex combination of A: " << to_str(A) << ", B: " << to_str(B) << " and C: " << to_str(C) << std::endl;
   Vector2D clipped_point = clip_to_triangle(point, A, B, C);
   Vector2D AB = B - A;
   Vector2D AC = C - A;
@@ -238,25 +237,7 @@ BarycentricPoint to_barycentric(const Point2D& point, const Point2D& A, const Po
   double denominator = D00 * D11 - D01 * D01;
   double x2 = (D11 * D20 - D01 * D21) / denominator;
   double x3 = (D00 * D21 - D01 * D20) / denominator;
-
-  // rounding & clamping for numerical stability
-  // x2 = std::round(100000.0 * x2)/100000.0;
-  // x3 = std::round(100000.0 * x3)/100000.0;
-  // x2 = constrain(truncate(x2));
-  // x3 = constrain(truncate(x3));
-
   double x1 = (1.0 - x2 - x3);
-  // x1 = std::round(100000.0 * x1)/100000.0;
-  // x1 = constrain(truncate(x1));
-
-  // if ((x1 + x2 + x3) != 1.0) {
-  //   std::cout << std::setprecision(35) << "to_barycentric: Computed invalid barycentric coordinates: {" << x1 << ", " << x2 << ", " << x3 << "} != 1.0, but instead => " << std::setprecision(15) << x1 + x2 + x3 << std::endl;
-  //   std::cout << std::setprecision(35) << "______________> for the point: {" << point[0] << ", " << point[1] << "} in the triangle ABC,\n";
-  //   std::cout << std::setprecision(35) << "                with A={" << A[0] << ", " << A[1] << "},\n";
-  //   std::cout << std::setprecision(35) << "                     B={" << B[0] << ", " << B[1] << "},\n";
-  //   std::cout << std::setprecision(35) << "                     C={" << C[0] << ", " << C[1] << "}" << std::endl;
-  //   exit(-1);
-  // }
 
   return BarycentricPoint(x1, x2, x3);
 }
@@ -264,13 +245,8 @@ BarycentricPoint to_barycentric(const Point2D& point, const Point2D& A, const Po
 double angle_i_from_lengths(const double l_ij, const double l_ik, const double l_jk, bool silent, std::string caller)
 {
   double epsilon = 0.000001;
-  // TODO: It might be that the denominator becomes zero because we work on Delta complexes where distances can become zero.
   double enumerator = l_ij*l_ij + l_ik*l_ik - l_jk*l_jk;
   double denominator = 2 * l_ij * l_ik;
-  // TODO: remove print
-  // std::cout << "Calcing theta_i_... enumerator=" << enumerator << ", denominator=" << denominator << std::endl; // TODO: remove
-  // assertm(denominator != 0, "angle_i_from_lengths: Denominator became zero!");
-  // assertm(enumerator / denominator < 0, "angle_i_from_lengths: cos(theta) became less than zero! We need to implement a case for obtuse triangles.");
   if (!silent && denominator == 0) { std::cout << dye("angle_i_from_lengths: Denominator became zero!", RED) << std::endl; }
   // if (enumerator / denominator < 0) { std::cout << dye("angle_i_from_lengths: cos(theta) became less than zero! We need to implement a case for obtuse triangles.", RED) << std::endl; }
   // TODO: Here I tried to introduce an epsilon for precisions slackness to remedy numerical issues (wasn't successful)

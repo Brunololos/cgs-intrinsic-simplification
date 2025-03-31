@@ -20,6 +20,13 @@ void map_registered(iSimpData& iSData);
 void map_current_from(iSimpData& iSData, const int from_mapping_idx);
 void map_current_from_to(iSimpData& iSData, const int from_mapping_idx, const int to_mapping_idx);
 
+// during the simplification heat is redistributed.
+// for the result of the heat diffusion on simplified triangulations
+// to be comparable to the result of heat diffusion on the fine triangulations
+// we need to compute the reverse mapping.
+void unredistribute_heat(iSimpData& iSData, Eigen::VectorXd& heat);
+double circumcentric_dual_mass(const iSimpData& iSData, const int vertex_idx);
+
 // simplification operations (returns whether the operation could be performed/was successful)
 bool is_edge_flippable(const iSimpData& iSData, const Quad2D& quad, const gcs::Edge edge);
 double compute_flattening_factor(const Eigen::VectorXd& L, const gcs::Vertex v, const bool verbose);
@@ -38,7 +45,6 @@ double intrinsic_curvature_error(const iSimpData& iSData, const gcs::Vertex vert
 void replay_intrinsic_flip(iSimpData& iSData, const int edge_idx);
 void replay_vertex_flattening(iSimpData& iSData, const int vertex_idx);
 void replay_vertex_flattening_with_heat(iSimpData& iSData, heatDiffData& hdData, const int vertex_idx);
-void replay_vertex_flattening_with_heat(iSimpData& iSData, heatDiffData& hdData, const int vertex_idx, const double u);
 void replay_vertex_removal(iSimpData& iSData, const int vertex_idx);
 void replay_vertex_removal_with_heat(iSimpData& iSData, heatDiffData& hdData, const int vertex_idx);
 

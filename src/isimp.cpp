@@ -71,6 +71,7 @@ void initMesh(const Eigen::Matrix<double, -1, 3>& V, const Eigen::Matrix<int, -1
   }
 
   data.mapping = std::vector<std::unique_ptr<Mapping_operation>>();
+  data.heat_mapping = std::vector<heatRedist>();
   data.tracked_points = std::vector<BarycentricPoint>();
   data.tracked_texcoords = std::vector<TexCoord>();
   data.tracked_by_triangle = std::vector<std::vector<int>>(data.F.rows());
@@ -171,6 +172,7 @@ void recover_heat_and_intrinsics_at(const int mapping_idx, heatDiffData& hdData,
 {
   data.recoveredMesh.reset(new gcs::ManifoldSurfaceMesh(data.F));
   data.recovered_L = data.inputL;
+  data.heat_mapping.clear();
   hdData.recovered_heat = hdData.initial_heat;
 
   std::cout << "Recovering heat & intrinsics: ";

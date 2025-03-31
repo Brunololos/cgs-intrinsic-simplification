@@ -39,9 +39,11 @@ int main(int argc, char *argv[])
   double diffusion_stepsize;
   double min_diff_stepsize = 0.0001;
   double max_diff_stepsize = 0.01;
+  // bool unredistribute_heat = true;
 
   // UI TRIGGERS/STATE
   bool do_intrinsics_recovery = true;
+  bool recover_for_simp_step = true;
   bool do_diffuse = false;
   bool do_triang_texture_update = false;
   bool do_heat_texture_update = false;
@@ -63,7 +65,7 @@ int main(int argc, char *argv[])
   std::vector<unsigned char> ps_heat_texture = std::vector<unsigned char>();
 
   // store all colorings for all different simplification states (for each vertex removal).
-  // std::vector<Eigen::VectorXi> colorings;
+  std::vector<Eigen::VectorXi> colorings;
 
   // SIMPLIFICATION
   Eigen::MatrixXd V, UV, NV;
@@ -76,7 +78,7 @@ int main(int argc, char *argv[])
   std::vector<std::vector<BarycentricPoint>> mapped_points_snapshots;
   std::vector<int> snapshot_mapping_indices;
   std::vector<int> simp_step_mapping_indices;
-  // Eigen::VectorXd current_heat;
+  Eigen::VectorXd current_heat;
 
   // RUDIMENTARY ARGUMENT PARSING
   int arg_idx = 1;
@@ -159,7 +161,7 @@ int main(int argc, char *argv[])
   coarsen_to_n_vertices = V.rows();
   diffuse_over_n_steps = 0;
   diffusion_stepsize = 0.005;
-  // colorings = std::vector<Eigen::VectorXi>();
+  colorings = std::vector<Eigen::VectorXi>();
   mapped_by_triangle_snapshots = std::vector<std::vector<std::vector<int>>>();
   mapped_points_snapshots = std::vector<std::vector<BarycentricPoint>>();
   snapshot_mapping_indices = std::vector<int>();
@@ -228,22 +230,22 @@ int main(int argc, char *argv[])
 
   polyscope::init();
   std::cout << RESET << R"(  Intrinsic Simplification Settings:
-    Mesh:                       )" << filename << R"(
+    Mesh:                       )" << filename << " (" << V.rows() << R"( vertices)
     texture size:               )" << TEXTURE_WIDTH << "x" << TEXTURE_HEIGHT << R"(px
     snapshot interval:          every )" << snapshot_interval << R"( vertex removals
     verbose simplification:     )" << (verbose_simplification ? "true" : "false") << R"(
   )" << std::endl;
 
-  // NOTE: This is only for the polyscope VertexScalarQuantity. Not needed for the heat texture mapping.
-  // auto update_heat = [&]()
-  // {
-  //   current_heat = Eigen::VectorXd::Zero(iSData.inputMesh->nVertices());
-  //   for (int i=0; i<hdData.heat_sample_vertices.size(); i++)
-  //   {
-  //     int vertex_idx = hdData.heat_sample_vertices[i];
-  //     current_heat(vertex_idx, 0) = get_heat(hdData, vertex_idx);
-  //   }
-  // };
+  auto update_heat = [&]()
+  {
+    current_heat = Eigen::VectorXd::Zero(iSData.inputMesh->nVertices());
+    for (int i=0; i<hdData.heat_sample_vertices.size(); i++)
+    {
+      int vertex_idx = hdData.heat_sample_vertices[i];
+      current_heat(vertex_idx, 0) = get_heat(hdData, vertex_idx);
+    }
+    unredistribute_heat(iSData, current_heat);
+  };
 
   // NOTE: this approach assumes, that all triangles lie completely within the texture. (No triangles wrap around the outside.)
   // I note this here, because lscm sometimes yields uv-coordinates that exceed the [0, 1] bounds. (They can be negative and their absolute value can exceed 1.)
@@ -347,12 +349,6 @@ int main(int argc, char *argv[])
     return snapshot;
   };
 
-  // TODO: If I wanted I could implement a visualization of the tangent space reference edges and/or the error vectors
-  const auto update_edges = [&]()
-  {
-
-  };
-
   auto compute_coloring = [&]() {
     int num_colors = CM.rows() - 1;
     Eigen::VectorXi Coloring = Eigen::VectorXi::Zero(iSData.F.rows());
@@ -383,7 +379,7 @@ int main(int argc, char *argv[])
 
       Coloring(i) = color_idx;
     }
-    // colorings.push_back(Coloring);
+    colorings.push_back(Coloring);
   };
 
   auto compute_and_get_coloring = [&]() {
@@ -438,7 +434,13 @@ int main(int argc, char *argv[])
     int num_triangles = iSData.mapped_by_triangle.size();
     int num_colors = CM.rows() - 1;
     int n_removals = iSData.inputMesh->nVertices() - coarsen_to_n_vertices;
-    Eigen::VectorXi coloring = compute_and_get_coloring();
+    Eigen::VectorXi coloring;
+    if(recover_for_simp_step)
+    {
+      coloring = colorings[n_removals];
+    } else {
+      coloring = compute_and_get_coloring();
+    }
 
     // draw texture
     for (int i = 0; i < num_triangles; i++)
@@ -472,9 +474,12 @@ int main(int argc, char *argv[])
         else if (k==2) { v3_idx = V.getIndex(); }
         k++;
       }
-      double heat1 = get_heat(hdData, v1_idx);
+/*       double heat1 = get_heat(hdData, v1_idx);
       double heat2 = get_heat(hdData, v2_idx);
-      double heat3 = get_heat(hdData, v3_idx);
+      double heat3 = get_heat(hdData, v3_idx); */
+      double heat1 = current_heat(v1_idx);
+      double heat2 = current_heat(v2_idx);
+      double heat3 = current_heat(v3_idx);
       for (int j = 0; j < iSData.mapped_by_triangle[i].size(); j++)
       {
         int original_idx = iSData.mapped_by_triangle[i][j];
@@ -550,6 +555,7 @@ int main(int argc, char *argv[])
     if(ImGui::SliderInt("mapping index", &coarsen_to_mapping_idx, 0, iSData.mapping.size()))
     {
       do_intrinsics_recovery = true;
+      recover_for_simp_step = false;
       int n_removals = 0;
       for (int i=0; i<=coarsen_to_mapping_idx && i<iSData.mapping.size(); i++) {
         if (iSData.mapping[i]->op_type == SIMP_OP::V_REMOVAL) { n_removals++; }
@@ -567,6 +573,7 @@ int main(int argc, char *argv[])
     if(ImGui::SliderInt("remaining vertices", &coarsen_to_n_vertices, min_n_vertices, iSData.inputMesh->nVertices()))
     {
       do_intrinsics_recovery = true;
+      recover_for_simp_step = true;
       if (simp_step_mapping_indices.size() > iSData.inputMesh->nVertices() - coarsen_to_n_vertices + 1)
       {
         int target_removal_idx = iSData.inputMesh->nVertices() - coarsen_to_n_vertices;
@@ -588,6 +595,7 @@ int main(int argc, char *argv[])
     {
       coarsen_to_n_vertices = std::max(std::min(coarsen_to_n_vertices + 1, (int) iSData.inputMesh->nVertices()), min_n_vertices);
       do_intrinsics_recovery = true;
+      recover_for_simp_step = true;
       if (simp_step_mapping_indices.size() > iSData.inputMesh->nVertices() - coarsen_to_n_vertices + 1)
       {
         int target_removal_idx = iSData.inputMesh->nVertices() - coarsen_to_n_vertices;
@@ -609,6 +617,7 @@ int main(int argc, char *argv[])
     {
       coarsen_to_n_vertices = std::max(std::min(coarsen_to_n_vertices - 1, (int) iSData.inputMesh->nVertices()), min_n_vertices);
       do_intrinsics_recovery = true;
+      recover_for_simp_step = true;
       if (simp_step_mapping_indices.size() > iSData.inputMesh->nVertices() - coarsen_to_n_vertices + 1)
       {
         int target_removal_idx = iSData.inputMesh->nVertices() - coarsen_to_n_vertices;
@@ -629,6 +638,7 @@ int main(int argc, char *argv[])
     {
       coarsen_to_mapping_idx = std::max(std::min(coarsen_to_mapping_idx + 1, (int) iSData.mapping.size()), 0);
       do_intrinsics_recovery = true;
+      recover_for_simp_step = false;
       int n_removals = 0;
       for (int i=0; i<=coarsen_to_mapping_idx && i<iSData.mapping.size(); i++) {
         if (iSData.mapping[i]->op_type == SIMP_OP::V_REMOVAL) { n_removals++; }
@@ -666,6 +676,7 @@ int main(int argc, char *argv[])
     {
       coarsen_to_mapping_idx = std::max(std::min(coarsen_to_mapping_idx - 1, (int) iSData.mapping.size()), 0);
       do_intrinsics_recovery = true;
+      recover_for_simp_step = false;
       int n_removals = 0;
       for (int i=0; i<=coarsen_to_mapping_idx && i<iSData.mapping.size(); i++) {
         if (iSData.mapping[i]->op_type == SIMP_OP::V_REMOVAL) { n_removals++; }
@@ -835,7 +846,7 @@ int main(int argc, char *argv[])
         // get intrinsic connectivity/edge-lengths for heat diffusion
         recover_heat_and_intrinsics_at(iSData.mapping.size()-1, hdData, iSData);
       }
-
+      
       build_heat_sample_indices(hdData, iSData);
       build_cotan_mass(hdData, iSData);
       build_cotan_laplacian(hdData, iSData);
@@ -847,7 +858,7 @@ int main(int argc, char *argv[])
     {
       do_diffuse = false;
       diffuse_heat(hdData, diffusion_stepsize, diffuse_over_n_steps);
-      // update_heat()
+      update_heat();
     }
     if (do_triang_texture_update)
     {
@@ -882,11 +893,10 @@ int main(int argc, char *argv[])
   simp_step_mapping_indices.push_back(0);
 
   init_viewer_data();
-  // compute_coloring();
+  compute_coloring();
 
   update_triang_texture();
-  // NOTE: This is only for the polyscope VertexScalarQuantity. Not needed for the heat texture mapping.
-  // update_heat();
+  update_heat();
 
   progressBar bar;
   if(!verbose_simplification) {
@@ -901,7 +911,7 @@ int main(int argc, char *argv[])
     // make simplification step
     bool success = iSimp_step(iSData, verbose_simplification);
     // compute coloring & save simplification state index for replays
-    if(success) { simp_step_mapping_indices.push_back(step_mapping_idx); /* compute_coloring(); */ }
+    if(success) { simp_step_mapping_indices.push_back(step_mapping_idx); compute_coloring(); }
 
     // take snapshot
     if ((iSData.inputMesh->nVertices() - iSData.intrinsicMesh->nVertices()) % snapshot_interval == 0) {
