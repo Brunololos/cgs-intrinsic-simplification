@@ -1,22 +1,20 @@
-#define igl_viewer_viewer_quiet
-// #define MIN_QUAD_WITH_FIXED_CPP_DEBUG
-#include <igl/opengl/glfw/Viewer.h>
-#include <igl/AABB.h>
-#include <igl/screen_space_selection.h>
-#include <igl/opengl/glfw/imgui/ImGuiPlugin.h>
-#include <igl/opengl/glfw/imgui/SelectionWidget.h>
+#include "polyscope/curve_network.h"
+#include "polyscope/point_cloud.h"
+#include "polyscope/polyscope.h"
+#include "polyscope/surface_mesh.h"
+#include "polyscope/surface_parameterization_quantity.h"
+
 #include <stdlib.h>
-#include <igl/arap.h>
-#include <igl/png/readPNG.h>
+#include <igl/read_triangle_mesh.h>
 #include <stdlib.h>
 #include <chrono>
 #include <ctime>
 
 #include "isimp.hpp"
+#include "heat_diff.hpp"
 #include "screenshot.hpp"
 #include "lscm_wrapper.hpp"
-
-typedef Eigen::Matrix<unsigned char, Eigen::Dynamic, Eigen::Dynamic> MatrixXuc;
+#include "query_texture_barycentrics.hpp"
 
 // TODO: move this somewhere else
 enum class ISIMP_MODE
@@ -27,30 +25,147 @@ enum class ISIMP_MODE
 
 int main(int argc, char *argv[])
 {
-  if (argc < 2)
-  {
-    std::cout << "Please pass an input mesh as first argument" << std::endl;
-    exit(1);
-  }
-
-  Eigen::MatrixXd V;
-  Eigen::MatrixXi F;
-  Eigen::MatrixXd UV;
-  MatrixXuc R, G, B, A;
+  // PROGRAM SETTINGS
+  std::string filename = "../../meshes/spot.obj";
   int TEXTURE_WIDTH = 1000;
   int TEXTURE_HEIGHT = 1000;
+  int snapshot_interval = 50;
+  bool verbose_simplification = false;
 
-  // int dot_pos = ((std::string) argv[1]).find_last_of('.');
-  // std::cout << ((std::string) argv[1]).substr(dot_pos) << std::endl;
-  // if (((std::string) argv[1]).substr(dot_pos) == ".obj")
-  // {
-  //   igl::readOBJ(argv[1], V, F);
-  // }
-  // else
-  // {
-  //   igl::read_triangle_mesh(argv[1], V, F);
-  // }
-  igl::read_triangle_mesh(argv[1], V, F);
+  // UI SETTINGS
+  int coarsen_to_mapping_idx = 0;
+  int coarsen_to_n_vertices;
+  int diffuse_over_n_steps;
+  double diffusion_stepsize;
+  double min_diff_stepsize = 0.0001;
+  double max_diff_stepsize = 0.01;
+  // bool unredistribute_heat = true;
+
+  // UI TRIGGERS/STATE
+  bool do_intrinsics_recovery = true;
+  bool recover_for_simp_step = true;
+  bool do_diffuse = false;
+  bool do_triang_texture_update = false;
+  bool do_heat_texture_update = false;
+
+  bool is_triang_map_up_to_date = true;
+  bool is_heat_map_up_to_date = false;
+  bool is_heat_map_initialized = false;
+
+  // POLYSCOPE
+  polyscope::SurfaceMesh* psMesh;
+  polyscope::SurfaceMesh* psCoarseMesh;
+  polyscope::SurfaceVertexScalarQuantity* g = nullptr;
+  polyscope::SurfaceCornerParameterizationQuantity* triang_map = nullptr;
+  polyscope::SurfaceCornerParameterizationQuantity* heat_map = nullptr;
+
+
+  // TEXTURING
+  std::vector<unsigned char> ps_triang_texture = std::vector<unsigned char>();
+  std::vector<unsigned char> ps_heat_texture = std::vector<unsigned char>();
+
+  // store all colorings for all different simplification states (for each vertex removal).
+  std::vector<Eigen::VectorXi> colorings;
+
+  // SIMPLIFICATION
+  Eigen::MatrixXd V, UV, NV;
+  Eigen::MatrixXi F, UF, NF;
+  int min_n_vertices = 0;
+
+  // SIMPLIFICATION - SNAPSHOTS
+  // points tracked by triangle for each simplification state (I did this just to make the polyscope slider movement smoother, but this takes a lot of storage.)
+  std::vector<std::vector<std::vector<int>>> mapped_by_triangle_snapshots;
+  std::vector<std::vector<BarycentricPoint>> mapped_points_snapshots;
+  std::vector<int> snapshot_mapping_indices;
+  std::vector<int> simp_step_mapping_indices;
+  Eigen::VectorXd current_heat;
+
+  // RUDIMENTARY ARGUMENT PARSING
+  int arg_idx = 1;
+  std::string mesh_arg = "";
+  std::string tex_arg = "";
+  std::string snap_arg = "";
+  std::string verb_arg = "";
+
+  // allow custom order args via "[arg_name]=[arg]"
+  while (arg_idx < argc)
+  {
+    std::string arg = std::string(argv[arg_idx]);
+    int eq_idx = arg.find_first_of("=");
+
+    // argument not specified
+    if (eq_idx == -1)
+    {
+      // std::cout << "no arg specifier provided for argument " << arg_idx << ":" << std::endl;
+      switch(arg_idx)
+      {
+        default:
+        case 1:
+          // std::cout << "-> assuming " << arg << " is the mesh." << std::endl;
+          mesh_arg = arg;
+          break;
+        case 2:
+          // std::cout << "-> assuming " << arg << " is the texture size." << std::endl;
+          tex_arg = arg;
+          break;
+        case 3:
+          // std::cout << "-> assuming " << arg << " is the snapshot interval." << std::endl;
+          snap_arg = arg;
+          break;
+        case 4:
+          // std::cout << "-> assuming " << arg << " is the verbosity." << std::endl;
+          verb_arg = arg;
+          break;
+      }
+    } else {
+      std::string arg_name = arg.substr(0, eq_idx);
+      if (arg_name == "mesh") {
+        mesh_arg = arg.substr(eq_idx+1);
+      } else if (arg_name == "tex") {
+        tex_arg = arg.substr(eq_idx+1);
+      } else if (arg_name == "snap") {
+        snap_arg = arg.substr(eq_idx+1);
+      } else if (arg_name == "verb") {
+        verb_arg = arg.substr(eq_idx+1);
+      } else {
+        std::cout << "Failed to parse argument!" << std::endl;
+      }
+    }
+    arg_idx++;
+  }
+
+  // setting args
+  int dot_pos = mesh_arg.size() - 4;
+  if (mesh_arg != "" && (mesh_arg.substr(dot_pos).compare(".obj")))
+  {
+    std::cout << "Please pass a .obj mesh as the first argument" << std::endl;
+    exit(-1);
+  }
+  if (mesh_arg != "") { filename = mesh_arg; }
+  if (tex_arg != "") {
+    TEXTURE_WIDTH = std::stoi(tex_arg);
+    TEXTURE_HEIGHT = TEXTURE_WIDTH;
+  }
+  if (snap_arg != "") { snapshot_interval = std::stoi(snap_arg); }
+  if (verb_arg != "") { verbose_simplification = (verb_arg == "verbose"); }
+
+
+  igl::readOBJ(filename, V, UV, NV, F, UF, NF);
+
+  if (UF.rows() <= 0)
+  {
+    std::cout << "Please pass a .obj mesh with texture coordinates included." << std::endl;
+    exit(-1);
+  }
+
+  coarsen_to_n_vertices = V.rows();
+  diffuse_over_n_steps = 0;
+  diffusion_stepsize = 0.005;
+  colorings = std::vector<Eigen::VectorXi>();
+  mapped_by_triangle_snapshots = std::vector<std::vector<std::vector<int>>>();
+  mapped_points_snapshots = std::vector<std::vector<BarycentricPoint>>();
+  snapshot_mapping_indices = std::vector<int>();
+  simp_step_mapping_indices = std::vector<int>();
 
   // modified vertices & faces
   Eigen::MatrixXd U = V;
@@ -61,6 +176,8 @@ int main(int argc, char *argv[])
   bool virgin = true;
   bool view_constraints = true;
   bool view_all_points = false;
+  int selected_cmap = 9;
+  const char* cmaps[]{"coolwarm", "reds", "blues", "viridis", "pink-green", "phase", "spectral", "rainbow", "jet", "turbo"};
   bool optimise = false;
 
   // ISIMP (intrinsic-simplification)
@@ -69,75 +186,74 @@ int main(int argc, char *argv[])
   iSimpData iSData;
   initMesh(V, F, iSData);
 
+  // HEAT DIFFUSION
+  heatDiffData hdData;
+  initHeatDiff(hdData, iSData);
+
   // randomize seed
   srand(time(NULL));
 
-  // TODO:
-  std::ofstream logFile;                     // logfile
-  bool doLogging = false;
-
-  // Viewer
-  igl::opengl::glfw::Viewer viewer;
-  igl::opengl::glfw::imgui::ImGuiPlugin plugin;
-
-  // TODO:
-  // Eigen::Matrix<unsigned char,Eigen::Dynamic,Eigen::Dynamic> R,G,B,A;
-  // igl::png::readPNG(argc > 2 ? argv[2] : "../textures/texture.png", R,G,B,A);
-  // igl::png::readPNG("../textures/deformedCube (during optimisation).png", R,G,B,A);
-  R = 255 * MatrixXuc::Ones(TEXTURE_WIDTH, TEXTURE_HEIGHT);
-  G = 255 * MatrixXuc::Ones(TEXTURE_WIDTH, TEXTURE_HEIGHT);
-  B = 255 * MatrixXuc::Ones(TEXTURE_WIDTH, TEXTURE_HEIGHT);
-  A = 255 * MatrixXuc::Ones(TEXTURE_WIDTH, TEXTURE_HEIGHT);
-
+  // COLORING/VISUALIZATION
   Eigen::MatrixXd CM = (Eigen::MatrixXd(16, 3) <<
-                            // 0.8,0.8,0.8,                        // 0 gray
-                            //  1,1,1,
-                            //  1.0/255.0,31.0/255.0,255.0/255.0,   // 1 blue
-                            //  0/255.0,201.0/255.0,195.0/255.0,    // 2 cyan
-                            //  7.0/255.0,152.0/255.0,59.0/255.0,   // 3 green
-                            //  190.0/255.0,255.0/255.0,0.0/255.0,  // 4 lime
-                            //  255.0/255.0,243.0/255.0,0.0/255.0,  // 5 yellow
-                            //  245.0/255.0,152.0/255.0,0.0/255.0,  // 6 orange
-                            //  224.0/255.0,18.0/255.0,0.0/255.0,   // 7 red
-                            //  220.0/255.0,13.0/255.0,255.0/255.0  // 8 magenta
-                            1,
-                        1, 1,                                       // 0 white
-                        178.0 / 255.0, 31.0 / 255.0, 53.0 / 255.0,  // 1 dark red
-                        216.0 / 255.0, 39.0 / 255.0, 53.0 / 255.0,  // 2 light red
-                        255.0 / 255.0, 116.0 / 255.0, 53.0 / 255.0, // 3 orange
-                        255.0 / 255.0, 161.0 / 255.0, 53.0 / 255.0, // 4 yellowish orange
-                        255.0 / 255.0, 203.0 / 255.0, 53.0 / 255.0, // 5 redish yellow
-                        255.0 / 255.0, 249.0 / 255.0, 53.0 / 255.0, // 6 yellow
-                        0.0 / 255.0, 117.0 / 255.0, 58.0 / 255.0,   // 7 dark green
-                        0.0 / 255.0, 158.0 / 255.0, 71.0 / 255.0,   // 8 green
-                        22.0 / 255.0, 221.0 / 255.0, 53.0 / 255.0,  // 9 light green
-                        0.0 / 255.0, 82.0 / 255.0, 165.0 / 255.0,   // 10 dark blue
-                        0.0 / 255.0, 121.0 / 255.0, 231.0 / 255.0,  // 11 blue
-                        0.0 / 255.0, 169.0 / 255.0, 252.0 / 255.0,  // 12 light blue
-                        104.0 / 255.0, 30.0 / 255.0, 126.0 / 255.0, // 13 dark purple
-                        125.0 / 255.0, 60.0 / 255.0, 181.0 / 255.0, // 14 purple
-                        189.0 / 255.0, 122.0 / 255.0, 246.0 / 255.0 // 15 light purple
-                        )
-                           .finished();
+    1, 1, 1,                                    // 1 white
+    178.0 / 255.0, 31.0 / 255.0, 53.0 / 255.0,  // 1 dark red
+    216.0 / 255.0, 39.0 / 255.0, 53.0 / 255.0,  // 2 light red
+    255.0 / 255.0, 116.0 / 255.0, 53.0 / 255.0, // 3 orange
+    255.0 / 255.0, 161.0 / 255.0, 53.0 / 255.0, // 4 yellowish orange
+    255.0 / 255.0, 203.0 / 255.0, 53.0 / 255.0, // 5 redish yellow
+    255.0 / 255.0, 249.0 / 255.0, 53.0 / 255.0, // 6 yellow
+    0.0 / 255.0, 117.0 / 255.0, 58.0 / 255.0,   // 7 dark green
+    0.0 / 255.0, 158.0 / 255.0, 71.0 / 255.0,   // 8 green
+    22.0 / 255.0, 221.0 / 255.0, 53.0 / 255.0,  // 9 light green
+    0.0 / 255.0, 82.0 / 255.0, 165.0 / 255.0,   // 10 dark blue
+    0.0 / 255.0, 121.0 / 255.0, 231.0 / 255.0,  // 11 blue
+    0.0 / 255.0, 169.0 / 255.0, 252.0 / 255.0,  // 12 light blue
+    104.0 / 255.0, 30.0 / 255.0, 126.0 / 255.0, // 13 dark purple
+    125.0 / 255.0, 60.0 / 255.0, 181.0 / 255.0, // 14 purple
+    189.0 / 255.0, 122.0 / 255.0, 246.0 / 255.0 // 15 light purple
+  ).finished();
 
-  // coloring
-  int numVorF = (true /* true: visualize over vertices, false: visualize over faces */) ? V.rows() : F.rows();
-  // TODO: C can be removed, we now render colors differently
-  Eigen::MatrixXd C = Eigen::MatrixXd(numVorF, 3);
-  for (int i = 0; i < numVorF; i++)
+  Eigen::MatrixXd CM2 = (Eigen::MatrixXd(12, 3) <<
+    166.0 / 255.0, 206.0 / 255.0, 227.0 / 255.0,
+    31.0 / 255.0, 120.0 / 255.0, 180.0 / 255.0,
+    178.0 / 255.0, 223.0 / 255.0, 138.0 / 255.0,
+    51.0 / 255.0, 160.0 / 255.0, 44.0 / 255.0,
+    251.0 / 255.0, 154.0 / 255.0, 153.0 / 255.0,
+    227.0 / 255.0, 26.0 / 255.0, 28.0 / 255.0,
+    253.0 / 255.0, 191.0 / 255.0, 111.0 / 255.0,
+    255.0 / 255.0, 127.0 / 255.0, 0.0 / 255.0,
+    202.0 / 255.0, 178.0 / 255.0, 214.0 / 255.0,
+    106.0 / 255.0, 61.0 / 255.0, 154.0 / 255.0,
+    255.0 / 255.0, 255.0 / 255.0, 153.0 / 255.0,
+    177.0 / 255.0, 89.0 / 255.0, 40.0 / 255.0
+  ).finished();
+
+  polyscope::init();
+  std::cout << RESET << R"(  Intrinsic Simplification Settings:
+    Mesh:                       )" << filename << " (" << V.rows() << R"( vertices)
+    texture size:               )" << TEXTURE_WIDTH << "x" << TEXTURE_HEIGHT << R"(px
+    snapshot interval:          every )" << snapshot_interval << R"( vertex removals
+    verbose simplification:     )" << (verbose_simplification ? "true" : "false") << R"(
+  )" << std::endl;
+
+  auto update_heat = [&]()
   {
-    C.row(i) = CM.row((i % (CM.rows() - 1)) + 1);
-  }
+    current_heat = Eigen::VectorXd::Zero(iSData.inputMesh->nVertices());
+    for (int i=0; i<hdData.heat_sample_vertices.size(); i++)
+    {
+      int vertex_idx = hdData.heat_sample_vertices[i];
+      current_heat(vertex_idx, 0) = get_heat(hdData, vertex_idx);
+    }
+    unredistribute_heat(iSData, current_heat);
+  };
 
   // NOTE: this approach assumes, that all triangles lie completely within the texture. (No triangles wrap around the outside.)
   // I note this here, because lscm sometimes yields uv-coordinates that exceed the [0, 1] bounds. (They can be negative and their absolute value can exceed 1.)
-  // To fix this I translated & rescaled all uv's to be withing [0, 1]. Because we don't have a set texture and build it ourselves, this is fine.
+  // To fix this uv's can be translated & rescaled to be withing [0, 1]. Because we don't have a set texture and build it ourselves, this is fine.
   auto register_texels = [&]()
   {
-    // std::cout << "Registering texels: " << std::endl;
     for (gcs::Face F : iSData.inputMesh->faces())
     {
-      // std::cout << "-> for extrinsic face: " << F << std::endl;
       std::array<int, 3> verts = std::array<int, 3>();
       int i = 0;
       for (gcs::Vertex V : F.adjacentVertices())
@@ -149,7 +265,7 @@ int main(int argc, char *argv[])
       // mapping from uv- to texture space
       Eigen::Matrix2d TexExt;
       TexExt << TEXTURE_WIDTH, 0,
-          0, TEXTURE_HEIGHT;
+                0, TEXTURE_HEIGHT;
 
       // triangle corners in texture space
       Point2D t0 = UV.row(verts[0]) * TexExt;
@@ -169,16 +285,7 @@ int main(int argc, char *argv[])
         {
           if (lies_inside_triangle(i, j, t0, t1, t2))
           {
-            // std::cout << to_str(Point2D(i, j)) << std::endl;
             BarycentricPoint bp = to_barycentric(Point2D(i, j), t0, t1, t2);
-            // std::cout << "Expressing texture coordinate: (" << i << ", " << j << ") barycentrically of: A=" << to_str(t0) << ", B=" << to_str(t1) << ", C=" << to_str(t2) << std::endl;
-            // std::cout << "Created barycentric point: " << to_str(bp) << std::endl;
-            // std::cout << "Converting back into explicit form 012, we get: " << to_str(to_explicit(bp, t0, t1, t2)) << std::endl;
-            // std::cout << "Converting back into explicit form 021, we get: " << to_str(to_explicit(bp, t0, t2, t1)) << std::endl;
-            // std::cout << "Converting back into explicit form 102, we get: " << to_str(to_explicit(bp, t1, t0, t2)) << std::endl;
-            // std::cout << "Converting back into explicit form 120, we get: " << to_str(to_explicit(bp, t1, t2, t0)) << std::endl;
-            // std::cout << "Converting back into explicit form 201, we get: " << to_str(to_explicit(bp, t2, t0, t1)) << std::endl;
-            // std::cout << "Converting back into explicit form 210, we get: " << to_str(to_explicit(bp, t2, t1, t0)) << std::endl;
             TexCoord tc = TexCoord(i, j);
             register_point(iSData, bp, tc, F.getIndex());
           }
@@ -189,26 +296,14 @@ int main(int argc, char *argv[])
 
   auto init_viewer_data = [&]()
   {
-    // prev face-based coloring: viewer.data().set_face_based(true);
-    // viewer.data().set_texture(R,G,B,A);
-    // viewer.data().set_colors(C);
-
-    // Calculate texture mapping
-    viewer.data().set_uv(UV);
-    viewer.data().set_texture(R, G, B);
-    viewer.data().show_texture = true;
-
-    // viewer.data().use_matcap = true;
-    viewer.data().point_size = 15;
-    viewer.data().line_width = 1;
-    viewer.data().show_lines = F.rows() < 20000;
+    ps_triang_texture.resize(4 * TEXTURE_WIDTH * TEXTURE_HEIGHT);
+    ps_heat_texture.resize(4 * TEXTURE_WIDTH * TEXTURE_HEIGHT);
   };
 
   // Selection
   bool translate = false;
   RAXIS rot_axis = RAXIS::YAW;
   bool only_visible = false;
-  igl::opengl::glfw::imgui::SelectionWidget selection;
   Eigen::Array<double, Eigen::Dynamic, 1> W = Eigen::Array<double, Eigen::Dynamic, 1>::Zero(V.rows());
   Eigen::Array<double, Eigen::Dynamic, 1> and_visible = Eigen::Array<double, Eigen::Dynamic, 1>::Zero(V.rows());
 
@@ -222,49 +317,198 @@ int main(int argc, char *argv[])
   Eigen::VectorXi bi;
   Eigen::VectorXi indices = Eigen::VectorXd::LinSpaced(V.rows(), 0.0, V.rows() - 1).cast<int>();
 
-  igl::AABB<Eigen::MatrixXd, 3> tree;
-  tree.init(V, F);
-
-  const auto update_edges = [&]()
+  const auto build_F_snapshot = [&](const iSimpData& iSData)
   {
-    // int UR = U.rows();
-    // int UC = U.cols();
+    std::vector<std::array<int, 3>> snapshot = std::vector<std::array<int, 3>>();
 
-    // Eigen::MatrixXd grad_offset = U - gradients;
-    // Eigen::MatrixXi E = Eigen::MatrixXi(UR, 2);
-    // for (int i = 0; i<UR; i++)
-    // {
-    //   E(i, 0) = i;
-    //   E(i, 1) = UR + i;
-    // }
-    // // vertical stacking
-    // Eigen::MatrixXd P(U.rows()+grad_offset.rows(), U.cols());
-    // P << U, grad_offset;
-    // //viewer.data().line_width = 2.0; // NOTE: SUPPOSEDLY NOT SUPPORTED ON MAC & WINDOWS
-    // viewer.data().set_edges(P, E, CM.row(4));
+    int n = iSData.inputMesh->nFaces();
+    for (int i=0; i<n; i++)
+    {
+      gcs::Face F = iSData.intrinsicMesh->face(i);
+      if(!F.isDead())
+      {
+        int v1_idx, v2_idx, v3_idx;
+        int k = 0;
+        for (gcs::Vertex V : F.adjacentVertices())
+        {
+          if (k==0) { v1_idx = V.getIndex(); }
+          else if (k==1) { v2_idx = V.getIndex(); }
+          else if (k==2) { v3_idx = V.getIndex(); }
+          k++;
+        }
+        std::array<int, 3> idcs = std::array<int, 3>();
+        idcs[0] = v1_idx;
+        idcs[1] = v2_idx;
+        idcs[2] = v3_idx;
+        snapshot.push_back(idcs);
+      } else {
+        snapshot.push_back(std::array<int, 3>({-1, -1, -1}));
+      }
+    }
+
+    return snapshot;
   };
 
-  const auto &update_texture = [&]()
+  auto compute_coloring = [&]() {
+    int num_colors = CM.rows() - 1;
+    Eigen::VectorXi Coloring = Eigen::VectorXi::Zero(iSData.F.rows());
+    for (int i = 0; i < iSData.inputMesh->nFaces(); i++)
+    {
+      // Determine color
+      int seeded_color_idx = (i % (num_colors - 1));
+      gcs::Face current_face = iSData.intrinsicMesh->face(i);
+      if (current_face.isDead()) { continue; }
+
+      int color_idx = 0;
+      for (int j=0; j<num_colors-1; j++)
+      {
+        bool valid = true;
+        int current_color_idx = ((seeded_color_idx + j) % (num_colors - 1)) + 1;
+        for(gcs::Face neighbor : current_face.adjacentFaces())
+        {
+          int neighbor_idx = neighbor.getIndex();
+          int neighbor_color_idx = Coloring(neighbor_idx);
+          if (current_color_idx == neighbor_color_idx)
+          {
+            valid = false;
+            break;
+          }
+        }
+        if (valid) { color_idx = current_color_idx; break; }
+      }
+
+      Coloring(i) = color_idx;
+    }
+    colorings.push_back(Coloring);
+  };
+
+  auto compute_and_get_coloring = [&]() {
+    int num_colors = CM.rows() - 1;
+    Eigen::VectorXi Coloring = Eigen::VectorXi::Zero(iSData.F.rows());
+    for (int i = 0; i < iSData.inputMesh->nFaces(); i++)
+    {
+      // Determine color
+      int seeded_color_idx = (i % (num_colors - 1));
+      gcs::Face current_face = iSData.recoveredMesh->face(i);
+      if (current_face.isDead()) { continue; }
+
+      int color_idx = 0;
+      for (int j=0; j<num_colors-1; j++)
+      {
+        bool valid = true;
+        int current_color_idx = ((seeded_color_idx + j) % (num_colors - 1)) + 1;
+        for(gcs::Face neighbor : current_face.adjacentFaces())
+        {
+          int neighbor_idx = neighbor.getIndex();
+          int neighbor_color_idx = Coloring(neighbor_idx);
+          if (current_color_idx == neighbor_color_idx)
+          {
+            valid = false;
+            break;
+          }
+        }
+        if (valid) { color_idx = current_color_idx; break; }
+      }
+
+      Coloring(i) = color_idx;
+    }
+    return Coloring;
+  };
+
+  const auto &reset_triang_texture = [&]()
+  {
+    for(int i=0; i<TEXTURE_WIDTH; i++)
+    {
+      for(int j=0; j<TEXTURE_HEIGHT; j++)
+      {
+        ps_triang_texture[4*(i + TEXTURE_WIDTH*j) + 0] = 0;
+        ps_triang_texture[4*(i + TEXTURE_WIDTH*j) + 1] = 0;
+        ps_triang_texture[4*(i + TEXTURE_WIDTH*j) + 2] = 0;
+        ps_triang_texture[4*(i + TEXTURE_WIDTH*j) + 3] = 255;
+      }
+    }
+  };
+
+  const auto &update_triang_texture = [&]()
   {
     int num_triangles = iSData.mapped_by_triangle.size();
     int num_colors = CM.rows() - 1;
+    int n_removals = iSData.inputMesh->nVertices() - coarsen_to_n_vertices;
+    Eigen::VectorXi coloring;
+    if(recover_for_simp_step)
+    {
+      coloring = colorings[n_removals];
+    } else {
+      coloring = compute_and_get_coloring();
+    }
+
+    // draw texture
     for (int i = 0; i < num_triangles; i++)
     {
-      // Color = colors(i%10)
       for (int j = 0; j < iSData.mapped_by_triangle[i].size(); j++)
       {
         int original_idx = iSData.mapped_by_triangle[i][j];
-        // BarycentricPoint original_point = iSData.tracked_points[original_idx];
-        // Point2D tex_coord = to_explicit(original_point, );
         TexCoord texcoord = iSData.tracked_texcoords[original_idx];
-        R(texcoord[0], texcoord[1]) = CM((i % num_colors) + 1, 0) * 255;
-        G(texcoord[0], texcoord[1]) = CM((i % num_colors) + 1, 1) * 255;
-        B(texcoord[0], texcoord[1]) = CM((i % num_colors) + 1, 2) * 255;
-        // std::cout << "Setting texcoord: (" << texcoord[0] << ", " << texcoord[1] << "): R=" << CM(i%9, 0) << ", G=" << CM(i%9, 1) << ", B=" << CM(i%9, 2) << std::endl;
+        ps_triang_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 0] = CM(coloring(i), 0) * 255;
+        ps_triang_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 1] = CM(coloring(i), 1) * 255;
+        ps_triang_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 2] = CM(coloring(i), 2) * 255;
+        ps_triang_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 3] = 255;
       }
     }
-    viewer.data().set_texture(R, G, B);
-    // std::cout << "write_success: " << igl::png::writePNG(R, G, B, A, "H:/GIT/cgs-intrinsic-simplification/textures/object_texture.png") << std::endl;
+  };
+
+  const auto &update_heat_texture = [&]()
+  {
+    int num_triangles = iSData.mapped_by_triangle.size();
+
+    // draw texture
+    for (int i = 0; i < num_triangles; i++)
+    {
+      if (iSData.recoveredMesh->face(i).isDead()) { continue; }
+      int v1_idx, v2_idx, v3_idx;
+      int k = 0;
+      for (gcs::Vertex V : iSData.recoveredMesh->face(i).adjacentVertices())
+      {
+        if (k==0) { v1_idx = V.getIndex(); }
+        else if (k==1) { v2_idx = V.getIndex(); }
+        else if (k==2) { v3_idx = V.getIndex(); }
+        k++;
+      }
+/*       double heat1 = get_heat(hdData, v1_idx);
+      double heat2 = get_heat(hdData, v2_idx);
+      double heat3 = get_heat(hdData, v3_idx); */
+      double heat1 = current_heat(v1_idx);
+      double heat2 = current_heat(v2_idx);
+      double heat3 = current_heat(v3_idx);
+      for (int j = 0; j < iSData.mapped_by_triangle[i].size(); j++)
+      {
+        int original_idx = iSData.mapped_by_triangle[i][j];
+        TexCoord texcoord = iSData.tracked_texcoords[original_idx];
+
+        // calculate heat value via interpolation
+        BarycentricPoint p = iSData.mapped_points[original_idx];
+        double psum = p[0] + p[1] + p[2];
+        if (psum > 1.0) { p = p / psum; }
+
+        double heat = heat1*p[0] + heat2*p[1] + heat3*p[2];
+        heat = std::max(std::min(heat, 1.0), 0.0);
+        if (p[0] + p[1] + p[2] > 1.0) { std::cout << "encountered excessive barycentric coordinates: (" << p[0] << ", " << p[1] << ", " << p[2] << ") => " << p[0] + p[1] + p[2] << std::endl; }
+        glm::vec3 C;
+        polyscope::render::ValueColorMap cmap = polyscope::render::engine->getColorMap(cmaps[selected_cmap]);
+        C = cmap.getValue(heat);
+
+        ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 0] = (C.r) * 255;
+        ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 1] = (C.g) * 255;
+        ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 2] = (C.b) * 255;
+        ps_heat_texture[4*(texcoord[0] + TEXTURE_WIDTH*texcoord[1]) + 3] = 255;
+      }
+    }
+  };
+
+  const auto &update_textures = [&]()
+  {
+    update_triang_texture();
+    update_heat_texture();
   };
 
   const auto update_mesh_points = [&](Eigen::VectorXi &selected_indices, Eigen::MatrixXd &selected_constraints)
@@ -282,487 +526,439 @@ int main(int argc, char *argv[])
       U(index, 0) = c0;
       U(index, 1) = c1;
       U(index, 2) = c2;
-      // std::cout << "Set mesh point " << i << std::endl;
-    }
-  };
-
-  // TODO: maybe make selected points translate with vertices during optimisation
-  const auto update_points = [&]()
-  {
-    // constrained
-    viewer.data().clear_points();
-    if (view_constraints || view_all_points)
-    {
-      viewer.data().set_points(igl::slice_mask(all_constraints, (selected_mask * constraints_mask).cast<bool>(), 1), CM.row(6));
-      viewer.data().add_points(igl::slice_mask(/* all_constraints */ U, (selected_mask * (1 - constraints_mask)).cast<bool>(), 1), CM.row(5));
-      viewer.data().add_points(igl::slice_mask(all_constraints, ((1 - selected_mask) * constraints_mask).cast<bool>(), 1), CM.row(7));
-    }
-    if (view_all_points)
-    {
-      viewer.data().add_points(igl::slice_mask(/* all_constraints */ U, ((1 - selected_mask) * (1 - constraints_mask)).cast<bool>(), 1), CM.row(2));
     }
   };
 
   // update entire mesh
-  auto refresh_mesh = [&]()
+  auto refresh_coarse_mesh = [&]()
   {
-    viewer.data().clear();
-    viewer.data().set_mesh(U, H);
+    // if (psCoarseMesh != nullptr)
+    // {
+    //   // polyscope::unregister...
+    // }
+    // TODO: update connectivity
+    psCoarseMesh  = polyscope::registerSurfaceMesh("coarse mesh", U, H);
     init_viewer_data();
-    // update_texture();
-    update_points();
-    viewer.draw();
+    update_textures();
   };
 
   // update mesh vertices
   auto refresh_mesh_vertices = [&]()
   {
-    viewer.data().set_vertices(U);
     init_viewer_data();
-    // update_texture();
-    update_points();
-    viewer.draw();
+    update_textures();
   };
 
-  selection.callback = [&]()
-  {
-    screen_space_selection(/* all_constraints */ U, F, tree, viewer.core().view, viewer.core().proj, viewer.core().viewport, selection.L, W, and_visible);
-    if (only_visible)
+  auto callback = [&]() {
+    ImGui::Text("Intrinsic Simplification");
+    ImGui::Separator();
+    if(ImGui::SliderInt("mapping index", &coarsen_to_mapping_idx, 0, iSData.mapping.size()))
     {
-      W = (W * and_visible);
-    }
-    selected_mask = (W.abs() > 0.5).cast<int>();
-    selected_ids = igl::slice_mask(indices, selected_mask.cast<bool>(), 1);
-    selection.mode = selection.OFF;
-    update_points();
-    viewer.draw();
-  };
-
-  auto update_constraints = [&](bool draw)
-  {
-    if (virgin)
-      return;
-    bi = igl::slice_mask(indices, constraints_mask.cast<bool>(), 1);
-    constraints = igl::slice(all_constraints, bi, 1);
-    // does all precomputations at once
-    igl::parallel_for(3, [&](const int i)
-                      {
-      // isimp_set_constraints(bi, constraints, iSData);
-      update_mesh_points(bi, constraints); }, 1);
-    update_points();
-    if (draw)
-    {
-      viewer.draw();
-    }
-  };
-
-  viewer.callback_pre_draw = [&](igl::opengl::glfw::Viewer &viewer) -> bool
-  {
-    if (simpMode == ISIMP_MODE::EACH_FRAME && optimise && !iSData.hasConverged)
-    {
-      // Simplification
-      // std::cout << "simplification iteration: " << iSData.iteration;
-      iSimp_step(iSData);
-      map_registered(iSData);
-      update_texture();
-    //   // // logging
-    //   // if (doLogging)
-    //   // {
-    //   //   logFile << std::to_string(optEnergies.first + optEnergies.second) << ";" << std::to_string(optEnergies.first) << ";" << std::to_string(optEnergies.second) << "\n";
-    //   // }
-    //   // TODO:
-    //   // std::cout << " => Energy: " << (optEnergies.first + optEnergies.second) << " (Scaling: " << optEnergies.first << ", Rotation: " << optEnergies.second << ")" << std::endl;
-    //   // update viewer
-    //   viewer.data().set_vertices(U);
-    //   update_points();
-    // }
-    // if (optimise && iSData.hasConverged)
-    // {
-    //   if (doLogging) { (logFile).close(); doLogging = false; }
-    //   std::cout << "optimisation converged!" << std::endl;
-    //   optimise = false;
-    }
-    return false;
-  };
-
-  viewer.callback_mouse_down = [&](igl::opengl::glfw::Viewer &viewer, int, int) -> bool
-  {
-    translate = false;
-    selection.mode = selection.OFF;
-    update_constraints(true);
-    refresh_mesh_vertices();
-    return false;
-  };
-
-  Eigen::RowVector3f last_mouse;
-  viewer.callback_mouse_move = [&](igl::opengl::glfw::Viewer &viewer, int x, int y)
-  {
-    if (!translate)
-      return false;
-    Eigen::RowVector3f drag_mouse(viewer.current_mouse_x, viewer.core().viewport(3) - viewer.current_mouse_y, last_mouse(2));
-    Eigen::RowVector3f drag_scene, last_scene;
-    igl::unproject(drag_mouse, viewer.core().view, viewer.core().proj, viewer.core().viewport, drag_scene);
-    igl::unproject(last_mouse, viewer.core().view, viewer.core().proj, viewer.core().viewport, last_scene);
-    for (size_t i = 0; i < selected_ids.size(); i++)
-    {
-      all_constraints.row(selected_ids(i)) += (drag_scene - last_scene).cast<double>();
-      // iSData.changedV[selected_ids(i)] = true; // TODO: implement constraint forwarding to ISIMP
-    }
-    constraints = igl::slice(all_constraints, bi, 1);
-    last_mouse = drag_mouse;
-    update_points();
-    viewer.draw();
-    return false;
-  };
-
-  viewer.callback_key_pressed = [&](decltype(viewer) &, unsigned int key, int mod)
-  {
-    std::chrono::system_clock::time_point timestamp;
-    std::time_t time;
-    std::string filename;
-    double theta = 0;
-    double U22, U21;
-    Eigen::MatrixXi F_new;
-
-    switch (key)
-    {
-    case ' ':
-      if (iSData.hasConverged) return true;
-      // step manually
-      if (simpMode == ISIMP_MODE::ON_INPUT)
-      {
-        // make simplification step
-        iSimp_step(iSData);
-
-        // i = 0;
-        // // Set intrinsic faces to be visualized extrinsically. This only makes sense for flat surfaces.
-        // F_new = Eigen::MatrixXi(iSData.intrinsicMesh->nFaces(), F.cols());
-        // for (gcs::Face F : iSData.intrinsicMesh->faces())
-        // {
-        //   Eigen::Vector3i ffface = Eigen::Vector3i();
-        //   int j = 0;
-        //   for (gcs::Vertex VV : F.adjacentVertices())
-        //   {
-        //     ffface(j) = VV.getIndex();
-        //     j++;
-        //   }
-        //   F_new.row(i) = ffface;
-        //   // if (H(i, 0) != F_new(i, 0) || H(i, 1) != F_new(i, 1) || H(i, 2) != F_new(i, 2))
-        //   // if (F_new(i, 0) == F_new(i, 1) || F_new(i, 1) == F_new(i, 2) || F_new(i, 2) == F_new(i, 0))
-        //   // {
-        //   //   std::cout << "updating face: " << F.getIndex() << std::endl;
-        //   //   printEigenVector3i(H.row(i));
-        //   //   std::cout << "to: " << std::endl;
-        //   //   printEigenVector3i(F_new.row(i));
-        //   // }
-        //   i++;
-        // }
-        // H = F_new;
-        // refresh_mesh();
-
-        map_registered(iSData);
-        update_texture();
-        // std::cout << "write_success: " << igl::png::writePNG(R, G, B, A, "H:/GIT/cgs-intrinsic-simplification/textures/object_texture.png") << std::endl;
-        // refresh_mesh();
-
-        // Logging
-        // TODO: implement logging
-        // optEnergies = asdap_energies(iSData, U);
-        // if(doLogging)
-        // {
-        //   logFile << std::to_string(optEnergies.first + optEnergies.second) << ";" << std::to_string(optEnergies.first) << ";" << std::to_string(optEnergies.second) << "\n";
-        // }
-        // std::cout << " => Energy: " << (optEnergies.first + optEnergies.second) << " (Scaling: " << optEnergies.first << ", Rotation: " << optEnergies.second << ")" << std::endl;
-        // if (iSData.hasConverged)
-        // {
-        //   if (doLogging) { (logFile).close(); doLogging = false; }
-        //   std::cout << "optimisation converged!" << std::endl;
-        // }
+      do_intrinsics_recovery = true;
+      recover_for_simp_step = false;
+      int n_removals = 0;
+      for (int i=0; i<=coarsen_to_mapping_idx && i<iSData.mapping.size(); i++) {
+        if (iSData.mapping[i]->op_type == SIMP_OP::V_REMOVAL) { n_removals++; }
       }
-      else
-      {
-        optimise = !optimise;
+      coarsen_to_n_vertices = iSData.inputMesh->nVertices() - n_removals;
+      if (triang_map->isEnabled()) {
+        is_heat_map_up_to_date = false;
+        do_triang_texture_update = true;
+      } else if(heat_map->isEnabled()) {
+        is_triang_map_up_to_date = false;
+        do_diffuse = true;
+        do_heat_texture_update = true;
       }
-      viewer.draw();
-      return true;
-    case 'H':
-    case 'h':
-      only_visible = !only_visible;
-      update_points();
-      viewer.draw();
-      return true;
-    case 'N':
-    case 'n':
-      // TODO: find new use
-      printEigenMatrixXd("L", iSData.L);
-      return true;
-    case 'A':
-    case 'a':
-      if (doLogging)
+    }
+    if(ImGui::SliderInt("remaining vertices", &coarsen_to_n_vertices, min_n_vertices, iSData.inputMesh->nVertices()))
+    {
+      do_intrinsics_recovery = true;
+      recover_for_simp_step = true;
+      if (simp_step_mapping_indices.size() > iSData.inputMesh->nVertices() - coarsen_to_n_vertices + 1)
       {
-        (logFile).close();
+        int target_removal_idx = iSData.inputMesh->nVertices() - coarsen_to_n_vertices;
+        coarsen_to_mapping_idx = simp_step_mapping_indices.at(iSData.inputMesh->nVertices() - coarsen_to_n_vertices + 1);
+      } else {
+        coarsen_to_mapping_idx = iSData.mapping.size();
       }
-      else
+
+      if (triang_map->isEnabled()) {
+        is_heat_map_up_to_date = false;
+        do_triang_texture_update = true;
+      } else if(heat_map->isEnabled()) {
+        is_triang_map_up_to_date = false;
+        do_diffuse = true;
+        do_heat_texture_update = true;
+      }
+    }
+    if (ImGui::Button("Add Vertex"))
+    {
+      coarsen_to_n_vertices = std::max(std::min(coarsen_to_n_vertices + 1, (int) iSData.inputMesh->nVertices()), min_n_vertices);
+      do_intrinsics_recovery = true;
+      recover_for_simp_step = true;
+      if (simp_step_mapping_indices.size() > iSData.inputMesh->nVertices() - coarsen_to_n_vertices + 1)
       {
-        // TODO: implement logging
-        // doLogging = true;
-        // timestamp = std::chrono::system_clock::now();
-        // time = std::chrono::system_clock::to_time_t(timestamp);
-        // filename = "../logs/EnergyCurve" + std::to_string(time) + ".csv";
-        // logFile.open(filename);
-        // logFile << std::setprecision(15);
+        int target_removal_idx = iSData.inputMesh->nVertices() - coarsen_to_n_vertices;
+        coarsen_to_mapping_idx = simp_step_mapping_indices.at(iSData.inputMesh->nVertices() - coarsen_to_n_vertices + 1);
+      } else {
+        coarsen_to_mapping_idx = iSData.mapping.size();
       }
-      return true;
-    case 'W':
-    case 'w':
-      // update texture
-      std::cout << "write_success: " << igl::png::writePNG(R, G, B, A, "H:/GIT/cgs-intrinsic-simplification/textures/object_texture.png") << std::endl;
-      refresh_mesh();
-      return true;
-    case 'E':
-    case 'e':
-      // Map registered points
-      map_registered(iSData);
-      std::cout << "Mapped points" << std::endl;
-      // std::cout << "Mapped points:\n";
-      // for(int i=0; i<iSData.mapped_by_triangle.size(); i++)
-      // {
-      //   for(int j=0; j<iSData.mapped_by_triangle[i].size(); j++)
-      //   {
-      //     std::cout << to_str(iSData.tracked_points[j]) << " => " << to_str(iSData.mapped_points[j]) << std::endl;
-      //   }
-      //   if(iSData.mapped_by_triangle[i].size() > 0)
-      //   {
-      //     std::cout << " to triangle: " << i << std::endl;
-      //   }
+      if (triang_map->isEnabled()) {
+        is_heat_map_up_to_date = false;
+        do_triang_texture_update = true;
+      } else if(heat_map->isEnabled()) {
+        is_triang_map_up_to_date = false;
+        do_diffuse = true;
+        do_heat_texture_update = true;
+      }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Remove Vertex"))
+    {
+      coarsen_to_n_vertices = std::max(std::min(coarsen_to_n_vertices - 1, (int) iSData.inputMesh->nVertices()), min_n_vertices);
+      do_intrinsics_recovery = true;
+      recover_for_simp_step = true;
+      if (simp_step_mapping_indices.size() > iSData.inputMesh->nVertices() - coarsen_to_n_vertices + 1)
+      {
+        int target_removal_idx = iSData.inputMesh->nVertices() - coarsen_to_n_vertices;
+        coarsen_to_mapping_idx = simp_step_mapping_indices.at(iSData.inputMesh->nVertices() - coarsen_to_n_vertices + 1);
+      } else {
+        coarsen_to_mapping_idx = iSData.mapping.size();
+      }
+      if (triang_map->isEnabled()) {
+        is_heat_map_up_to_date = false;
+        do_triang_texture_update = true;
+      } else if(heat_map->isEnabled()) {
+        is_triang_map_up_to_date = false;
+        do_diffuse = true;
+        do_heat_texture_update = true;
+      }
+    }
+    if (ImGui::Button("Do Single Operation"))
+    {
+      coarsen_to_mapping_idx = std::max(std::min(coarsen_to_mapping_idx + 1, (int) iSData.mapping.size()), 0);
+      do_intrinsics_recovery = true;
+      recover_for_simp_step = false;
+      int n_removals = 0;
+      for (int i=0; i<=coarsen_to_mapping_idx && i<iSData.mapping.size(); i++) {
+        if (iSData.mapping[i]->op_type == SIMP_OP::V_REMOVAL) { n_removals++; }
+      }
+      coarsen_to_n_vertices = iSData.inputMesh->nVertices() - n_removals;
+      if (triang_map->isEnabled()) {
+        is_heat_map_up_to_date = false;
+        do_triang_texture_update = true;
+      } else if(heat_map->isEnabled()) {
+        is_triang_map_up_to_date = false;
+        do_diffuse = true;
+        do_heat_texture_update = true;
+      }
+
+      if (coarsen_to_mapping_idx < iSData.mapping.size()) {
+        std::cout << "Performing ";
+        int prim_idx = iSData.mapping[coarsen_to_mapping_idx]->reduced_primitive_idx();
+        switch(iSData.mapping[coarsen_to_mapping_idx]->op_type)
+        {
+          default:
+          case SIMP_OP::E_FLIP:
+            std::cout << "EDGE FLIP of Edge: " << prim_idx << "(" << iSData.recoveredMesh->edge(prim_idx).firstVertex().getIndex() << ", " << iSData.recoveredMesh->edge(prim_idx).secondVertex().getIndex() << ")" << std::endl;
+            break;
+          case SIMP_OP::V_FLATTEN:
+            std::cout << "VERTEX FLATTENING of Vertex: " << prim_idx << std::endl;
+            break;
+          case SIMP_OP::V_REMOVAL:
+            std::cout << "VERTEX REMOVAL of Vertex: " << prim_idx << std::endl;
+            break;
+        }
+      }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Revert Single Operation"))
+    {
+      coarsen_to_mapping_idx = std::max(std::min(coarsen_to_mapping_idx - 1, (int) iSData.mapping.size()), 0);
+      do_intrinsics_recovery = true;
+      recover_for_simp_step = false;
+      int n_removals = 0;
+      for (int i=0; i<=coarsen_to_mapping_idx && i<iSData.mapping.size(); i++) {
+        if (iSData.mapping[i]->op_type == SIMP_OP::V_REMOVAL) { n_removals++; }
+      }
+      coarsen_to_n_vertices = iSData.inputMesh->nVertices() - n_removals;
+      if (triang_map->isEnabled()) {
+        is_heat_map_up_to_date = false;
+        do_triang_texture_update = true;
+      } else if(heat_map->isEnabled()) {
+        is_triang_map_up_to_date = false;
+        do_diffuse = true;
+        do_heat_texture_update = true;
+      }
+    }
+    ImGui::Dummy(ImVec2(0.0f, 10.0f));
+    ImGui::Text("Heat Diffusion");
+    ImGui::Separator();
+    if(ImGui::SliderScalar("Diffusion Stepsize", ImGuiDataType_Double, &diffusion_stepsize, &min_diff_stepsize, &max_diff_stepsize))
+    {
+      do_diffuse = true;
+      do_heat_texture_update = true;
+    }
+    if(ImGui::SliderInt("Diffusion Steps", &diffuse_over_n_steps, 0, 200))
+    {
+      do_diffuse = true;
+      do_heat_texture_update = true;
+    }
+    if (ImGui::Button("Add Diffusion Step"))
+    {
+      diffuse_over_n_steps++;
+      do_diffuse = true;
+      do_heat_texture_update = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Remove Diffusion Step"))
+    {
+        diffuse_over_n_steps = std::max(diffuse_over_n_steps - 1, 0);
+        do_diffuse = true;
+        do_heat_texture_update = true;
+    }
+    if(ImGui::Combo("Heat color map", &selected_cmap, cmaps, 10))
+    {
+      do_heat_texture_update = true;
+    }
+    ImGui::Dummy(ImVec2(0.0f, 10.0f));
+    ImGui::Text("Debug");
+    ImGui::Separator();
+    if (ImGui::Button("Print intrinsic triangulation"))
+    {
+      std::cout << "Remaining intrinsic triangles:" << std::endl;
+        // assuming recoveredMesh ist recovered and consistent with mapped points
+      for (gcs::Face F : iSData.recoveredMesh->faces())
+      {
+        std::cout << "> Triangle " << F.getIndex() << ": {";
+        bool first = true;
+        for (gcs::Vertex V : F.adjacentVertices())
+        {
+          if (!first) { std::cout << ", "; }
+          std::cout << V.getIndex();
+          first = false;
+        }
+        std::cout << "},      N: {";
+        first = true;
+        for (gcs::Face NF : F.adjacentFaces())
+        {
+          if (!first) { std::cout << ", "; }
+          std::cout << NF.getIndex();
+          if (first) { first = false; }
+        }
+        std::cout << "}" << std::endl;
+      }
+    }
+    if (ImGui::Button("Print tracked points"))
+    {
+      std::cout << "Tracked points by triangle:" << std::endl;
+      for (int i=0; i<iSData.tracked_by_triangle.size(); i++)
+      {
+        if (iSData.tracked_by_triangle[i].size() <= 0) { continue; }
+        // assuming recoveredMesh ist recovered and consistent with mapped points
+        gcs::Face F = iSData.inputMesh->face(i);
+        std::cout << "> Triangle " << i << ": {";
+        bool first = true;
+        for (gcs::Vertex V : F.adjacentVertices())
+        {
+          if (!first) { std::cout << ", "; }
+          std::cout << V.getIndex();
+          first = false;
+        }
+        std::cout << "}:" << std::endl;
+
+        for(int j=0; j<iSData.tracked_by_triangle[i].size(); j++)
+        {
+          BarycentricPoint bp = iSData.tracked_points[iSData.tracked_by_triangle[i][j]];
+          std::cout << "  > Barycentric Point: {" << bp[0] << ", " << bp[1] << ", " << bp[2] << "}" << std::endl;
+        }
+      }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Print mapped points"))
+    {
+      std::cout << "Mapped points by triangle:" << std::endl;
+      for (int i=0; i<iSData.mapped_by_triangle.size(); i++)
+      {
+        if (iSData.mapped_by_triangle[i].size() <= 0) { continue; }
+        // assuming recoveredMesh ist recovered and consistent with mapped points
+        gcs::Face F = iSData.recoveredMesh->face(i);
+        std::cout << "> Triangle " << i << ": {";
+        bool first = true;
+        for (gcs::Vertex V : F.adjacentVertices())
+        {
+          if (!first) { std::cout << ", "; }
+          std::cout << V.getIndex();
+          first = false;
+        }
+        std::cout << "}:" << std::endl;
+
+        for(int j=0; j<iSData.mapped_by_triangle[i].size(); j++)
+        {
+          BarycentricPoint bp = iSData.mapped_points[iSData.mapped_by_triangle[i][j]];
+          std::cout << "  > Barycentric Point: {" << bp[0] << ", " << bp[1] << ", " << bp[2] << "}" << std::endl;
+        }
+      }
+    }
+    if (ImGui::Button("Print initial heat"))
+    {
+      std::cout << "Initial heat by vertex:" << std::endl;
+      for (int i=0; i<hdData.final_heat.size(); i++)
+      {
+        // assuming recoveredMesh ist recovered and consistent with mapped points
+        gcs::Face F = iSData.recoveredMesh->face(i);
+        int vertex_idx = hdData.heat_sample_vertices[i];
+        std::cout << "> Vertex " << vertex_idx << " heat: " << hdData.initial_heat[vertex_idx] << std::endl;
+      }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Print heat"))
+    {
+      std::cout << "Current heat by vertex:" << std::endl;
+      for (int i=0; i<hdData.final_heat.size(); i++)
+      {
+        // assuming recoveredMesh ist recovered and consistent with mapped points
+        gcs::Face F = iSData.recoveredMesh->face(i);
+        int vertex_idx = hdData.heat_sample_vertices[i];
+        std::cout << "> Vertex " << vertex_idx << " heat: " << hdData.final_heat[i] << std::endl;
+      }
+    }
+    if (!is_heat_map_initialized) { is_heat_map_initialized = true; do_heat_texture_update = true; }
+    if (!is_triang_map_up_to_date && triang_map->isEnabled()) { do_triang_texture_update = true; }
+    if (!is_heat_map_up_to_date && heat_map->isEnabled()) { do_diffuse = true; do_heat_texture_update = true; }
+    if (do_intrinsics_recovery)
+    {
+      // load latest snapshot
+      do_intrinsics_recovery = false;
+      std::cout << "\nUpdate for " << coarsen_to_n_vertices << " remaining vertices:" << std::endl;
+      int snapshot_idx = std::floor((iSData.inputMesh->nVertices() - coarsen_to_n_vertices) / snapshot_interval);
+      int coarsen_from_n_vertices = iSData.inputMesh->nVertices() - snapshot_idx * snapshot_interval;
+      iSData.mapped_by_triangle = mapped_by_triangle_snapshots.at(snapshot_idx);
+      iSData.mapped_points = mapped_points_snapshots.at(snapshot_idx);
+      int snapshot_mapping_idx = snapshot_mapping_indices.at(snapshot_idx);
+      if (coarsen_to_mapping_idx < iSData.mapping.size())
+      {
+        map_current_from_to(iSData, snapshot_mapping_idx, coarsen_to_mapping_idx+1);
+        // get intrinsic connectivity/edge-lengths for heat diffusion
+        recover_heat_and_intrinsics_at(coarsen_to_mapping_idx, hdData, iSData);
+      } else {
+        map_current_from(iSData, snapshot_mapping_idx);
+        // get intrinsic connectivity/edge-lengths for heat diffusion
+        recover_heat_and_intrinsics_at(iSData.mapping.size()-1, hdData, iSData);
+      }
+      
+      build_heat_sample_indices(hdData, iSData);
+      build_cotan_mass(hdData, iSData);
+      build_cotan_laplacian(hdData, iSData);
+      // if (g != nullptr) {
+      //   g = psMesh->addVertexScalarQuantity("ps heat map", current_heat);
       // }
-      update_texture();
-      return true;
-    case 'J':
-    case 'j':
-      simpMode = (simpMode == ISIMP_MODE::ON_INPUT) ? ISIMP_MODE::EACH_FRAME : ISIMP_MODE::ON_INPUT;
-      return true;
-    case 'Y':
-    case 'y':
-      (logFile).close();
-      return true;
-    case 'C':
-    case 'c':
-      // register_point(iSData, bp, 0);
-      // std::cout << "Registered point barycentric point: (" << bp[0] << ", " << bp[1] << ", " << bp[2] << ") at ";
-      // printGCSFace(iSData.inputMesh->face(0));
-      // TODO: we don't need constraints
-      //   virgin = false;
-      //   iSData.hasConverged = false;
-      //   constraints_mask = ((constraints_mask+selected_mask)>0).cast<int>();
-      //   update_constraints(true);
-      //   refresh_mesh();
-      //   // std::cout << constraints << "\n\n\n";
-      //   // std::cout << bi << "\n\n\n";
-      //   ---------------------------------------------------------------
-      //   std::array<int, 5> fp_indices = order_quad_edge_indices(eddge);
-      //   std::cout << fp_indices[0] << ", " << fp_indices[1] << ", " << fp_indices[2] << ", " << fp_indices[3] << ", " << fp_indices[4] << std::endl;
-      //   for (int i=0; i<5; i++)
-      //   {
-      //     std::cout << "Edge " << fp_indices[i] << ": (" << iSData.inputMesh->edge(fp_indices[i]).firstVertex().getIndex() << ", " << iSData.inputMesh->edge(fp_indices[i]).secondVertex().getIndex() << ")" << std::endl;
-      //   }
-      //   // flip_intrinsic(iSData.inputMesh, iSData.L, eddge);
-      //   flip_intrinsic(iSData, eddge);
-      //   for (gcs::Face F : iSData.inputMesh->faces())
-      //   {
-      //     Eigen::Vector3i ffface = Eigen::Vector3i();
-      //     int j = 0;
-      //     for (gcs::Vertex VV : F.adjacentVertices())
-      //     {
-      //       ffface(j) = VV.getIndex();
-      //       j++;
-      //     }
-      //     F_new.row(i) = ffface;
-      //     i++;
-      //   }
-      //   H = F_new;
-      //   refresh_mesh();
-      //   std::cout << "Edge " << fp_indices[0] << " length: " << iSData.L[fp_indices[0]] << std::endl;
-      return true;
-    case 'U':
-    case 'u':
-      constraints_mask = ((constraints_mask - selected_mask) == 1).cast<int>();
-      if (constraints_mask.sum() == 0)
-      {
-        virgin = true;
-        return true;
-      }
-      update_constraints(true);
-      return true;
-    case 'G':
-    case 'g':
-      if (virgin)
-        return true;
-      translate = !translate;
-      {
-        Eigen::MatrixXd CP;
-        Eigen::Vector3d mean = constraints.colwise().mean();
-        igl::project(mean, viewer.core().view, viewer.core().proj, viewer.core().viewport, CP);
-        last_mouse = Eigen::RowVector3f(viewer.current_mouse_x, viewer.core().viewport(3) - viewer.current_mouse_y, CP(0, 2));
-        update_constraints(true);
-      }
-      return true;
-    case 'D':
-    case 'd':
-      if (virgin)
-        return true;
-      selected_mask = (W.abs() > 0.5).cast<int>();
-      selected_ids = igl::slice_mask(indices, selected_mask.cast<bool>(), 1);
-      U = rotate_selected(U, selected_ids, rot_axis, 10.0);
-      all_constraints = U;
-      update_constraints(true);
-      refresh_mesh_vertices();
-      break;
-    case 'K':
-    case 'k':
-      selection.mode = selection.RECTANGULAR_MARQUEE;
-      selection.clear();
-      return true;
-    case 'S':
-    case 's':
+    }
+    if (do_diffuse)
     {
-      auto t = std::time(nullptr);
-      auto tm = *std::localtime(&t);
-      std::ostringstream oss;
-      oss << std::put_time(&tm, "%d-%m-%Y %H-%M-%S");
-      screenshot(viewer, oss.str() + ".png", 1);
+      do_diffuse = false;
+      diffuse_heat(hdData, diffusion_stepsize, diffuse_over_n_steps);
+      update_heat();
     }
-      return true;
-    case 'T':
-    case 't':
-      // if (mode == 0)
-      // {
-      //   viewer.data().set_texture(R,G,B,A);
-      // } else {
-      //   Eigen::Matrix<unsigned char,Eigen::Dynamic,Eigen::Dynamic> R,G,B,A;
-      //   igl::png::readPNG(argc > 3 ? argv[3] : "../textures/texture.png", R,G,B,A);
-      //   viewer.data().set_texture(R,G,B,A);
-      // }
-      return true;
-    case 'R':
-    case 'r':
-      // reset mesh
-      U = V;
-      refresh_mesh();
-      return true;
-    case 'F':
-    case 'f':
-      // filter
-      selected_mask = selected_mask * constraints_mask;
-      selected_ids = igl::slice_mask(indices, selected_mask.cast<bool>(), 1);
-      update_points();
-      viewer.draw();
-      return true;
-    case 'P':
-    case 'p':
-      view_all_points = !view_all_points;
-      update_points();
-      viewer.draw();
-      return true;
-    case '.':
-      view_constraints = !view_constraints;
-      if (!view_constraints)
-      {
-        view_all_points = false;
+    if (do_triang_texture_update)
+    {
+      do_triang_texture_update = false;
+      update_triang_texture();
+      if (triang_map != nullptr) {
+        triang_map->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_triang_texture, polyscope::TextureFormat::RGBA8);
+        triang_map->setStyle(polyscope::ParamVizStyle::TEXTURE);
+        triang_map->setCheckerSize(1);
       }
-      update_points();
-      viewer.draw();
-      return true;
-    case '-':
-      switch (rot_axis)
-      {
-      default:
-      case RAXIS::ROLL:
-        rot_axis = RAXIS::YAW;
-        break;
-      case RAXIS::YAW:
-        rot_axis = RAXIS::PITCH;
-        break;
-      case RAXIS::PITCH:
-        rot_axis = RAXIS::ROLL;
-        break;
-      }
-      return true;
-    case 'X':
-    case 'x':
-      if (virgin)
-        return true;
-      // reset constrainted positions of selected
-      for (size_t i = 0; i < selected_mask.size(); i++)
-      {
-        if (selected_mask(i))
-          all_constraints.row(i) = V.row(i);
-      }
-      update_constraints(true);
-      return true;
-    case 'Q':
-    case 'q':
-      std::vector<Eigen::VectorXd> points;
-      std::vector<std::array<int, 2>> edges;
-      Eigen::MatrixXd P1, P2;
-      P1.resize(0, 3);
-      P2.resize(0, 3);
-      viewer.data().set_edges(P1, P2.cast<int>(), CM.row(4));
-      viewer.data().add_edges(P1, P2, CM.row(4));
-      return true;
+      is_triang_map_up_to_date = true;
     }
-    return false;
+    if (do_heat_texture_update)
+    {
+      do_heat_texture_update = false;
+      update_heat_texture();
+      if (heat_map != nullptr) {
+        heat_map->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_heat_texture, polyscope::TextureFormat::RGBA8);
+        heat_map->setStyle(polyscope::ParamVizStyle::TEXTURE);
+        heat_map->setCheckerSize(1);
+      }
+      is_heat_map_up_to_date = true;
+    }
   };
 
-  viewer.plugins.push_back(&plugin);
-  plugin.widgets.push_back((igl::opengl::glfw::imgui::ImGuiWidget *)&selection);
-  selection.mode = selection.OFF;
+  // register initial snapshots & build textures for no simplification
+  query_texture_barycentrics(UV, UF, TEXTURE_WIDTH, TEXTURE_HEIGHT, iSData);
+  map_registered(iSData);
+  mapped_by_triangle_snapshots.push_back(iSData.mapped_by_triangle);
+  mapped_points_snapshots.push_back(iSData.mapped_points);
+  snapshot_mapping_indices.push_back(0);
+  simp_step_mapping_indices.push_back(0);
 
-  std::cout << R"( igl::opengl::glfw::Viewer usage:
-  I,i     Toggle invert normals
-  L       Toggle wireframe
-  O,o     Toggle orthographic/perspective projection
-  Z       Snap to canonical view
-  [,]     Toggle between rotation control types (trackball, two-axis
-          valuator with fixed up, 2D mode with no rotation))
-  <,>     Toggle between models
-  ;       Toggle vertex labels
-  :       Toggle face labels/
-
-ASDAP Usage:
-  [space]  Run one ISIMP Step (hold for animation)
-  J,j      Toggle single Step/continual simplification (changes [space] behaviour)
-  N,n      Toggle gradient visibility // TODO: not needed
-  A,a      Toggle logging
-  R,r      Reset mesh position
-
-  H,h      Toggle whether to take visibility into account for selection
-  F,f      Remove non constrained points from selection
-
-  C,c      Add selection to constraints // TODO: not needed
-  U,u      Remove selection from constraints
-
-  X,x      Reset constrain position of selected vertices
-  G,g      Move selection
-  D,d      Rotate selection
-  P,p      View all point positions
-  .        View constrained point positions
-  -        Toggle rotation axis (Yaw -> Pitch -> Roll)
-
-  S,s      Make screenshot
-)";
-
-  viewer.data().clear();
-  viewer.data().set_mesh(V, F);
-  lscm(V, F, UV);
-  // scale factor, such that UV's range from [-1, 1]
-  double absmax = std::max(UV.maxCoeff(), -UV.minCoeff());
-  // transforming UV's to range from [0, 1]
-  UV = (UV / absmax + Eigen::MatrixXd::Ones(UV.rows(), UV.cols())) / 2.0;
-  register_texels();
   init_viewer_data();
-  viewer.core().is_animating = true;
-  viewer.core().background_color.head(3) = CM.row(0).head(3).cast<float>();
-  // update_points()
-  viewer.launch();
+  compute_coloring();
+
+  update_triang_texture();
+  update_heat();
+
+  progressBar bar;
+  if(!verbose_simplification) {
+    std::cout << "\n\nPerforming Simplification:    ";
+    start_progressBar(bar);
+  } else {
+    std::cout << "\n\nBeginning Simplification..." << std::endl;
+  }
+  while (!iSData.hasConverged)
+  {
+    int step_mapping_idx = iSData.mapping.size();
+    // make simplification step
+    bool success = iSimp_step(iSData, verbose_simplification);
+    // compute coloring & save simplification state index for replays
+    if(success) { simp_step_mapping_indices.push_back(step_mapping_idx); compute_coloring(); }
+
+    // take snapshot
+    if ((iSData.inputMesh->nVertices() - iSData.intrinsicMesh->nVertices()) % snapshot_interval == 0) {
+      if(verbose_simplification) {
+        std::cout << "Took snapshot at " << iSData.inputMesh->nVertices() - iSData.intrinsicMesh->nVertices() << " removed vertices" << std::endl;
+      }
+
+      // save texel mapping state for intrinsic triangulation texture mapping
+      map_current_from(iSData, snapshot_mapping_indices.at(snapshot_mapping_indices.size() - 1));
+      mapped_by_triangle_snapshots.push_back(iSData.mapped_by_triangle);
+      mapped_points_snapshots.push_back(iSData.mapped_points);
+      snapshot_mapping_indices.push_back(iSData.mapping.size());
+    }
+    if(!verbose_simplification)
+    {
+      double progress_percent = ((double) iSData.inputMesh->nVertices() - iSData.intrinsicMesh->nVertices()) / ((double) iSData.inputMesh->nVertices());
+      progress_progressBar(bar, progress_percent);
+    }
+  }
+  if(!verbose_simplification) { finish_progressBar(bar); }
+  // refresh_coarse_mesh(); //TODO: update coarse mesh
+  min_n_vertices = iSData.intrinsicMesh->nVertices();
+
+  // psCoarseMesh  = polyscope::registerSurfaceMesh("coarse mesh", U, H); // TODO: visualize coarse mesh
+  psMesh = polyscope::registerSurfaceMesh("input mesh", V, F);
+
+  // convert parameterization to polyscope's desired input format
+  Eigen::Matrix<glm::vec2, Eigen::Dynamic, 1> parameterization(3 * UF.rows());
+  for (int iF = 0; iF < UF.rows(); iF++) {
+    for (int iC = 0; iC < 3; iC++) {
+      parameterization(3 * iF + iC) = glm::vec2{UV(UF(iF, iC), 0), UV(UF(iF, iC), 1)};
+    }
+  }
+  triang_map = psMesh->addParameterizationQuantity("intrinsic triangulation", parameterization);
+
+  triang_map->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_triang_texture, polyscope::TextureFormat::RGBA8);
+  triang_map->setEnabled(true);
+  triang_map->setStyle(polyscope::ParamVizStyle::TEXTURE);
+  triang_map->setCheckerSize(1);
+
+  heat_map = psMesh->addParameterizationQuantity("heat map", parameterization);
+  heat_map->setTexture(TEXTURE_WIDTH, TEXTURE_HEIGHT, ps_heat_texture, polyscope::TextureFormat::RGBA8);
+  heat_map->setStyle(polyscope::ParamVizStyle::TEXTURE);
+  heat_map->setCheckerSize(1);
+
+  // g = psMesh->addVertexScalarQuantity("ps heat map", current_heat);
+
+  polyscope::state::userCallback = callback;
+  polyscope::show();
 }

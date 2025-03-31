@@ -3,6 +3,7 @@
 
 #include <Eigen/Core>
 #include <Eigen/Dense>
+#include <algorithm>
 #include <vector>
 #include <math.h>
 #include <iomanip>
@@ -36,12 +37,14 @@ double flipped_edgelength(const Quad2D& trianglepair);
 bool is_convex(const Quad2D& trianglepair);
 
 bool lies_inside_triangle(const double px, const double py, const Point2D v0, const Point2D v1, const Point2D v2);
+Point2D clip_to_triangle(const Point2D point, const Point2D A, const Point2D B, const Point2D C);
 
 Point2D to_explicit(const BarycentricPoint& bary_point, const Point2D& A, const Point2D& B, const Point2D& C);
 BarycentricPoint to_barycentric(const Point2D& point, const Point2D& A, const Point2D& B, const Point2D& C);
 
 // calculate interior angle at corner i of a triangle ijk with edge lengths l_ij, l_ik, l_jk (via law of cosines)
-double angle_i_from_lengths(const double l_ij, const double l_ik, const double l_jk);
+double angle_i_from_lengths(const double l_ij, const double l_ik, const double l_jk, bool silent=false, std::string caller="");
+double triangle_area_from_lengths(const double l_ij, const double l_ik, const double l_jk);
 
 double scalar_cross(const Vector2D& v, const Vector2D& w);
 
@@ -50,5 +53,11 @@ Vector2D to_cartesian(const PolarVector2D& v);
 
 double to_degrees(const double angle_in_radians);
 double to_radians(const double angle_in_degrees);
+
+double truncate(const double number, const int decimals=6);
+double constrain(const double number, const double low=0.0, const double high=1.0);
+
+bool satisfies_triangle_ineq(const double l_ij, const double l_ik, const double l_jk, const double epsilon=1e-6);
+bool is_non_degenerate(const double l_ij, const double l_ik, const double l_jk);
 
 #endif

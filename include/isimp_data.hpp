@@ -9,6 +9,8 @@
 
 enum class SIMP_OP;
 class Mapping_operation;
+struct heatRedist;
+enum class CircumcentricShape { ZERO, TRIANGLE, CHOPPED_TRIANGLE, RECTANGLE, CHOPPED_QUADRILATERAL };
 
 struct customLess
 {
@@ -28,6 +30,8 @@ struct iSimpData {
 
   // edge lengths in the intrinsic domain
   Eigen::Matrix<double, -1, 1> L;
+  Eigen::Matrix<double, -1, 1> inputL;
+  Eigen::Matrix<double, -1, 1> recovered_L;
 
   // intrinsic simplification quantities
   // Vertex masses (M_minus, M_plus)
@@ -43,12 +47,16 @@ struct iSimpData {
   std::unique_ptr<gcs::ManifoldSurfaceMesh> inputMesh;
   std::unique_ptr<gcs::VertexPositionGeometry> inputGeometry;
   std::unique_ptr<gcs::ManifoldSurfaceMesh> intrinsicMesh;
+  std::unique_ptr<gcs::ManifoldSurfaceMesh> recoveredMesh;
 
   // edges that define the angle 0 of the tangent spaces, centered on a vertex
   Eigen::Matrix<int, -1, 1> tangent_space_reference_edges;
 
   // bijective mapping consisting of a sequence of atomic mapping operations
   std::vector<std::unique_ptr<Mapping_operation>> mapping;
+  // workaround to unredistribute heat (because the coarse-to-fine mapping is not implemented)
+  // TODO: should be removed & replaced by another routine, when the inverse mapping direction is implemented
+  std::vector<heatRedist> heat_mapping;
   // points tracked through the bijective mapping from the fine to the coarse triangulation
   std::vector<BarycentricPoint> tracked_points;
   std::vector<BarycentricPoint> mapped_points;
@@ -79,6 +87,12 @@ class Mapping_operation {
         {
             std::cout << "ALERT! Called map_to_coarse of superclass!" << std::endl;
         }
+
+        virtual int reduced_primitive_idx()
+        {
+            std::cout << "ALERT! Called reduced_primitive_idx of superclass!" << std::endl;
+            return -1;
+        }
 };
 
 // intrinsic flip:
@@ -89,6 +103,8 @@ class Mapping_operation {
 // mapping for intrinsic edge flips
 class Edge_Flip : public Mapping_operation {
   public:
+    // replay parameter
+    int edge_idx;
     int Fk_idx;
     int Fl_idx;
 
@@ -99,39 +115,29 @@ class Edge_Flip : public Mapping_operation {
     Normal2D n;
     Bias b;
 
-    // in case I want to write order permutations into tables to remove the switch case
+    // in case I want to write order permutations into tables to remove the switch cases
     // std::array<std::array<Point2D, 3>, 3> Fk_v_order;
     // std::array<std::array<Point2D, 3>, 3> Fl_v_order;
 
-    Edge_Flip(const int Fk_idx_, const int Fl_idx_, const Quad2D quad_, const int Fk_unique_v_idx_, const int Fl_unique_v_idx_)
+    Edge_Flip(const int edge_idx_, const int Fk_idx_, const int Fl_idx_, const Quad2D quad_, const int Fk_unique_v_idx_, const int Fl_unique_v_idx_)
     {
       op_type = SIMP_OP::E_FLIP;
+      edge_idx = edge_idx_;
       Fk_idx = Fk_idx_;
       Fl_idx = Fl_idx_;
 
       Fk_unique_v_idx = Fk_unique_v_idx_;
       Fl_unique_v_idx = Fl_unique_v_idx_;
       v0 = quad_.row(0); v1 = quad_.row(1); v2 = quad_.row(2); v3 = quad_.row(3);
-      // printEigenMatrixXd("v0", v0);
-      // printEigenMatrixXd("v1", v1);
-      // printEigenMatrixXd("v2", v2);
-      // printEigenMatrixXd("v3", v3);
 
       Vector2D P3P2 = v2 - v3;
       n = Normal2D(P3P2(1), -P3P2(0)).normalized();
       b = - n.dot(v2);
-      // printEigenMatrixXd("v2", v2);
-      // printEigenMatrixXd("v3", v3);
-      // printEigenMatrixXd("p3p2", P3P2);
-      // printEigenMatrixXd("n", n);
-      // std::cout << "b: " << b << std::endl;
-      // std::cout << "Fk_unique_idx = " << Fk_unique_v_idx;
-      // std::cout << ", Fl_unique_idx = " << Fl_unique_v_idx << std::endl;
     }
 
     bool lies_in_Fk(const Point2D& p) {
       // std::cout << "Checking if point p: " + to_str(p) + " is inside Fk. n * p = " << n.dot(p) << " + b: " << b << std::endl;
-      return n.dot(p) + b >= 0;  // TODO: check if we need >= 0 or <= 0
+      return n.dot(p) + b >= 0;
     }
 
     void map_to_coarse(std::vector<BarycentricPoint>& tracked_points, std::vector<std::vector<int>>& tracked_by_triangle)
@@ -142,26 +148,14 @@ class Edge_Flip : public Mapping_operation {
       tracked_by_triangle[Fk_idx].clear();
       tracked_by_triangle[Fl_idx].clear();
 
-      // TODO: remove prints
-      // std::cout << "\n\nMapping to coarse!" << std::endl;
-      // std::cout << "Fk_idx = " << Fk_idx;
-      // std::cout << ", Fl_idx = " << Fl_idx << std::endl;
-      // std::cout << "Planar unfolding of edge lengths:\n";
-      // printEigenVector2d("v0", v0);
-      // printEigenVector2d("v1", v1);
-      // printEigenVector2d("v2", v2);
-      // printEigenVector2d("v3", v3);
       // reinsert the barycentrically reexpressed vertices into the their correct new face Fk or Fl
       for (int p_idx : Fk_points)
       {
         Point2D p;
-        // TODO: remove prints
-        // std::cout << "Mapping Fk point " << to_str(tracked_points[p_idx]) << " through intrinsic edge flip." << std::endl;
-        // std::cout << "Fk_unique_idx: " << Fk_unique_v_idx << std::endl;
         // TODO: create table and replace this switch case with a single to_explicit call with table lookups
         switch (Fk_unique_v_idx)
         {
-          // This is what I thought it should be like: 
+          // This is what I thought it should be like:
           case 0:
             // std::cout << "making explicit (201), barycentric point " << to_str(tracked_points[p_idx]) << " as convex combination of A: " << to_str(v2) << ", B: " << to_str(v0) << " and C: " << to_str(v1) << std::endl;
             p = to_explicit(tracked_points[p_idx], v2, v0, v1);
@@ -217,22 +211,27 @@ class Edge_Flip : public Mapping_operation {
         }
       }
     }
+
+    int reduced_primitive_idx() { return edge_idx; }
 };
 
 // mapping for vertex flattening
 class Vertex_Flattening : public Mapping_operation {
   public:
+    // replay parameter
+    int vertex_idx;
     // mapping parameters
     // mapped faces
     std::vector<int> F_idxs;
     // indices of flattened vertex in mapped faces
     std::vector<int> v_idxs;
-    // int v_idx;
-    // scaling factor resulting from removal
+    // scaling factor resulting from flattening
     double v_u;
 
-    Vertex_Flattening(const std::vector<int> F_idxs_, const std::vector<int> v_idxs_, const double v_u_)
+    Vertex_Flattening(const int vertex_idx_, const std::vector<int> F_idxs_, const std::vector<int> v_idxs_, const double v_u_)
     {
+      op_type = SIMP_OP::V_FLATTEN;
+      vertex_idx = vertex_idx_;
       F_idxs = F_idxs_;
       v_idxs = v_idxs_;
       v_u = v_u_;
@@ -255,11 +254,16 @@ class Vertex_Flattening : public Mapping_operation {
         }
       }
     }
+
+    int reduced_primitive_idx() { return vertex_idx; }
 };
 
 // mapping for vertex removal
 class Vertex_Removal : public Mapping_operation {
   public:
+    // replay parameter
+    int vertex_idx;
+
     // mapping parameters
     std::vector<int> F_idxs;
     int F_res_idx;
@@ -271,17 +275,14 @@ class Vertex_Removal : public Mapping_operation {
     Point2D vi, vj, vk, vl;
 
 
-    // Vertex_Removal(const std::vector<int> F_idxs_, const int F_res_idx_, const Quad2D quad_, const int F_jk_shared_v_idx_, const int F_jl_shared_v_idx_, const int F_kl_shared_v_idx_)
-    Vertex_Removal(const std::vector<int> F_idxs_, const int F_res_idx_, const Quad2D quad_, const std::vector<int> shared_idxs, const int F_res_permutation_)
+    Vertex_Removal(const int vertex_idx_, const std::vector<int> F_idxs_, const int F_res_idx_, const Quad2D quad_, const std::vector<int> shared_idxs, const int F_res_permutation_)
     {
       op_type = SIMP_OP::V_REMOVAL;
+      vertex_idx = vertex_idx_;
       F_idxs = F_idxs_;
       F_res_idx = F_res_idx_;
       F_res_permutation = F_res_permutation_;
 
-      // F_jk_shared_v_idx = F_jk_shared_v_idx_;
-      // F_jl_shared_v_idx = F_jl_shared_v_idx_;
-      // F_kl_shared_v_idx = F_kl_shared_v_idx_;
       F_jk_shared_v_idx = shared_idxs[0];
       F_jl_shared_v_idx = shared_idxs[1];
       F_kl_shared_v_idx = shared_idxs[2];
@@ -400,4 +401,15 @@ class Vertex_Removal : public Mapping_operation {
         tracked_by_triangle[F_res_idx].push_back(p_idx);
       }
     }
+
+    int reduced_primitive_idx() { return vertex_idx; }
+
+};
+// used to reverse the heat distribution during the simplification
+struct heatRedist {
+    int vertex_idx;
+    double vertex_mass;
+    Eigen::VectorXi neighbor_idcs;
+    Eigen::VectorXd neighbor_mass;
+    Eigen::VectorXd neighbor_mass_delta;
 };
