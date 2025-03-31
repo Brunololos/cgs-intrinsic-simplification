@@ -63,22 +63,18 @@ void unredistribute_heat(iSimpData &iSData, Eigen::VectorXd &heat)
   for (int i = iSData.heat_mapping.size() - 1; i >= 0; i--)
   {
     heatRedist hredist = iSData.heat_mapping[i];
-    // TODO: compute inverse mapping
     heat(hredist.vertex_idx) = 0.0;
-    // double total_mass_delta = 0.0;
     for (int i = 0; i < hredist.neighbor_idcs.rows(); i++)
     {
       int neighbor_idx = hredist.neighbor_idcs(i);
       int mass_delta = hredist.neighbor_mass_delta(i);
       double weight = hredist.neighbor_mass_delta(i) / (hredist.vertex_mass);
       heat(hredist.vertex_idx) += weight * heat(neighbor_idx);
-      // total_mass_delta += mass_delta;
     }
     for (int i = 0; i < hredist.neighbor_idcs.rows(); i++)
     {
       int neighbor_idx = hredist.neighbor_idcs(i);
       int mass_delta = hredist.neighbor_mass_delta(i);
-      // double weight = mass_delta / (total_mass_delta);
       double weight = hredist.neighbor_mass_delta(i) / (hredist.neighbor_mass_delta(i) + hredist.neighbor_mass(i));
       heat(neighbor_idx) = (heat(neighbor_idx) - weight * heat(hredist.vertex_idx)) / (1 - weight);
     }
@@ -780,8 +776,7 @@ bool flip_vertex_to_deg3(iSimpData &iSData, const int vertex_idx, const bool ver
   }
 
   // TODO: the edge flip reversion currently leads to some issues
-  // TODO: from brief testing, it seems like this code can be reinserted again without issues
-  // I think that a case (possibly due to numerics) can arise, where a first edge flip can be performed, but not the three edge flips to undo it.
+  // It seems there is a case that (possibly due to numerics) can arise, where a first edge flip can be performed, but not the three edge flips to undo it.
   // Because in my reasoning a quad that can be flipped once, should be able to be flipped any number of times.
   // revert edge-flips
   // while(flips.size() > 0)
@@ -861,14 +856,8 @@ PolarVector2D next_error_vector(const iSimpData &iSData, const double alpha, con
     mi = alpha * iSData.M(vertex_idx, 1);
     mj = iSData.M(neighbor_idx, 1);
   }
-  // printEigenVector2d(T);
-  // printEigenVector2d(nT);
-  // std::cout << "mi: " << mi << ", mj: " << mj << std::endl;
 
   gcs::Edge connection = iSData.intrinsicMesh->connectingEdge(vertex, neighbor);
-  // TODO:
-  // std::cout << connection << std::endl;
-  // if (connection.isDead()) { std::cout << RED << "Chose dead connection!" << RESET << std::endl; }
   if (connection.isBoundary())
   {
     std::cout << RED << "Chose dead connection!" << RESET << std::endl;
@@ -884,7 +873,6 @@ PolarVector2D next_error_vector(const iSimpData &iSData, const double alpha, con
     return PolarVector2D(0.0, 0.0);
   }
   double edge_angle = find_tangent_space_angle(iSData, connection, neighbor);
-  // TODO:
   double edge_length = iSData.L[connection.getIndex()];
   Vector2D transport = to_cartesian({edge_angle, edge_length});
   Vector2D transported = to_cartesian(parallel_transport(iSData, T, vertex, neighbor));
@@ -952,8 +940,6 @@ double intrinsic_curvature_error(const iSimpData &iSData, const gcs::Vertex vert
     std::array<int, 3> edge_indices = order_triangle_edge_indices(F, vertex_idx);
     double l_ij = std::exp(u_i / 2.0) * iSData.L[edge_indices[0]];
     double l_ik = std::exp(u_i / 2.0) * iSData.L[edge_indices[1]];
-    // double l_ij = L_opt[edge_indices[0]];
-    // double l_ik = L_opt[edge_indices[1]];
     double l_jk = iSData.L[edge_indices[2]];
 
     if (!satisfies_triangle_ineq(l_ij, l_ik, l_jk))
@@ -1213,45 +1199,6 @@ void replay_vertex_removal_with_heat(iSimpData &iSData, heatDiffData &hdData, co
     exit(-1);
   }
 
-  // naively redistribute heat
-  // TODO: this is currently done evenly among all neighbors, but should probably be done by considering the transport cost and circumcentric areas of the adjacent vertices.
-  // int d = vertex.degree();
-  // double heat = hdData.recovered_heat(vertex_idx, 0);
-
-  // TODO:
-  // gather transfer costs
-  // double total_cost = 0.0;
-  // heatRedist redist;
-  // redist.vertex_idx = vertex_idx;
-  // redist.neighbor_idcs = Eigen::Vector3i::Zero();
-  // redist.neighbor_coeffs = Eigen::Vector3d::Zero();
-  // // std::unordered_map<int, double> transfer_costs = std::unordered_map<int, double>();
-  // int i = 0;
-  // for (gcs::Vertex V : vertex.adjacentVertices())
-  // {
-  //   redist.neighbor_idcs(i) = V.getIndex();
-  //   double neighbor_heat = hdData.recovered_heat(V.getIndex(), 0);
-  //   gcs::Edge E = iSData.recoveredMesh->connectingEdge(vertex, V);
-  //   double distance = iSData.recovered_L(E.getIndex());
-  //   // double transfer_cost = distance /* + neighbor_heat */;
-  //   // transfer_costs.insert({V.getIndex(), transfer_cost});
-  //   // total_cost += transfer_cost;
-  //   double weight = std::pow(0.5, 1.0+distance);
-  //   hdData.recovered_heat(V.getIndex(), 0) = (neighbor_heat*(1.0 - weight)) + (heat * weight);
-  //   redist.neighbor_coeffs(i) = (1.0 - weight);
-  //   i++;
-  // }
-  // iSData.heat_mapping.push_back(redist);
-
-  // transfer heat weighted, by transfer cost
-  // for (gcs::Vertex V : vertex.adjacentVertices())
-  // {
-  //
-  //   hdData.recovered_heat(V.getIndex(), 0) = ((neighbor_heat*(d-1)) / (double) d) + (heat / (double) d);
-  //   // hdData.recovered_heat(V.getIndex(), 0) += heat*(transfer_costs.at(V.getIndex()) / total_cost);
-  // }
-  // hdData.recovered_heat(vertex_idx, 0) = 0.0;
-
   // heat redistribution
   int d = vertex.degree();
   double epsilon = 1e-3;
@@ -1293,17 +1240,6 @@ void replay_vertex_removal_with_heat(iSimpData &iSData, heatDiffData &hdData, co
       exit(-1);
     }
   }
-  // TODO: check that total mass_delta is equal to mass (the other vertex masses should accumulate the removed vertices dual mass exactly.)
-  // if (total_change < mass - epsilon)
-  // {
-  //   std::cout << "total_change: " << total_change << " is smaller than mass: " << mass << " !!!!" << std::endl;
-  //   exit(-1);
-  // }
-  // if (total_change > mass + epsilon)
-  // {
-  //   std::cout << "total_change: " << total_change << " is greater than mass: " << mass << " !!!!" << std::endl;
-  //   exit(-1);
-  // }
 
   for (i=0; i<redist.neighbor_idcs.rows(); i++)
   {
@@ -1322,22 +1258,6 @@ void replay_vertex_removal_with_heat(iSimpData &iSData, heatDiffData &hdData, co
     }
     hdData.recovered_heat(neighbor_idx, 0) = heat * weight + neighbor_heat * (1 - weight);
   }
-
-  // i = 0;
-  // for (gcs::Vertex V : vertex.adjacentVertices())
-  // {
-  //   double neighbor_heat = hdData.recovered_heat(V.getIndex(), 0);
-
-  //   // calculate weighting
-  //   // gcs::Edge E = iSData.recoveredMesh->connectingEdge(vertex, V);
-  //   // double distance = iSData.recovered_L(E.getIndex());
-  //   // double weight = distance / total_weights;
-  //   double weight = circumcentric_dual_mass(iSData, redist.neighbor_idcs(i)) - redist.neighbor_mass_delta(i);
-  //   // hdData.recovered_heat(V.getIndex(), 0) = (neighbor_heat*(1.0 - weight)) + (heat * weight);
-  //   hdData.recovered_heat(V.getIndex(), 0) += heat * weight;
-  //   redist.neighbor_mass_delta(i) = weight;
-  //   i++;
-  // }
   iSData.heat_mapping.push_back(redist);
   hdData.recovered_heat(vertex.getIndex(), 0) = 0.0;
   return;

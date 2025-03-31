@@ -50,9 +50,6 @@ Quad2D unfold(const double l_ij, const double l_ik, const double l_jk, const dou
   double theta_i_k = angle_i_from_lengths(l_ij, l_ik, l_jk);
   if (l_jl == 0.0) { std::cout << "unfold: Calling angle_i  with zero length" << std::endl; }
   double theta_i_l = angle_i_from_lengths(l_ij, l_il, l_jl);
-  // TODO: remove prints
-  // std::cout << "calced theta_i_k: " << theta_i_k << std::endl;
-  // std::cout << "calced theta_i_l: " << theta_i_l << std::endl;
   Quad2D unfolded = Quad2D();
   unfolded.row(0) = Point2D(0.0, 0.0);
   unfolded.row(1) = Point2D(l_ij, 0.0);
@@ -211,11 +208,6 @@ Point2D clip_to_triangle(const Point2D point, const Point2D A, const Point2D B, 
 
 Point2D to_explicit(const BarycentricPoint& bary_point, const Point2D& A, const Point2D& B, const Point2D& C)
 {
-  // TODO: remove print
-  // std::cout << "making explicit, barycentric point " << to_str(bary_point) << " as convex combination of A: " << to_str(A) << ", B: " << to_str(B) << " and C: " << to_str(C) << std::endl;
-  // if (bary_point[0] + bary_point[1] + bary_point[2] != 1.0) {
-  //   std::cout << "to_explicit: Encountered invalid barycentric coordinates: {" << bary_point[0] << ", " << bary_point[1] << ", " << bary_point[2] << "} != 1.0" << std::endl;
-  // }
   return A*bary_point(0) + B*bary_point(1) + C*bary_point(2);
 }
 
@@ -248,8 +240,6 @@ double angle_i_from_lengths(const double l_ij, const double l_ik, const double l
   double enumerator = l_ij*l_ij + l_ik*l_ik - l_jk*l_jk;
   double denominator = 2 * l_ij * l_ik;
   if (!silent && denominator == 0) { std::cout << dye("angle_i_from_lengths: Denominator became zero!", RED) << std::endl; }
-  // if (enumerator / denominator < 0) { std::cout << dye("angle_i_from_lengths: cos(theta) became less than zero! We need to implement a case for obtuse triangles.", RED) << std::endl; }
-  // TODO: Here I tried to introduce an epsilon for precisions slackness to remedy numerical issues (wasn't successful)
   if (enumerator / denominator >= 1.0 && enumerator / denominator <= 1.0 + epsilon) { return 0.0; }
   if (enumerator / denominator <= -1.0 && enumerator / denominator >= -1.0 - epsilon) { return M_PI; }
   if (!silent && (enumerator / denominator < -1 || enumerator / denominator > 1))

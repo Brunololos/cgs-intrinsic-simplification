@@ -63,8 +63,6 @@ void diffuse_heat(heatDiffData& hdData, const double stepsize, const int steps)
     {
         B = hdData.M * hdData.final_heat;
         hdData.final_heat = A.ldlt().solve(B);
-        // TODO: remove (tested heat clamping)
-        // for (int j=0; j<hdData.final_heat.rows(); j++) { hdData.final_heat(j, 0) = std::max(std::min(hdData.final_heat(j, 0), 1.0), 0.0); }
 
         // progress bar
         float progress_percent = ((float) i+1)/((float) steps);
