@@ -1,0 +1,375 @@
+<!doctype html><html class="no-js"><head><meta charset="utf-8"><title>Surface Simplification using Intrinsic Error Metrics</title><meta name="description" content=""><meta name="viewport" content="width=device-width">
+<!-- Place favicon.ico and apple-touch-icon.png in the root directory -->
+<link href="http://fonts.googleapis.com/css?family=Raleway:300,400,600" rel="stylesheet" type="text/css">
+    <link rel="stylesheet" type="text/css" href="style.css">
+        <script type="text/javascript" async
+  src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-MML-AM_CHTML"></script>
+        <!--<link rel="stylesheet" href="styles/main.37ab405b.css">-->
+<body>
+<!--[if lt IE 7]>
+<p class="browsehappy">You are using an 
+    <strong>outdated</strong> browser. Please 
+    <a href="http://browsehappy.com/">upgrade your browser</a> to improve your experience.
+</p>
+<![endif]-->
+<div class="container">
+
+    <nav class="navbar">
+        <div class="container">
+            <ul class="navbar-list">
+                <li class="navbar-item">
+                    <a class="navbar-link" href="#intro">Intro</a>
+                </li>
+                <li class="navbar-item">
+                    <a class="navbar-link" href="#isimp">Intrinsic Simplification</a>
+                </li>
+                <li class="navbar-item">
+                    <a class="navbar-link" href="#implementation">Implementation</a>
+                </li>
+                <li class="navbar-item">
+                    <a class="navbar-link" href="#results">Results</a>
+                </li>
+                <li class="navbar-item">
+                    <a class="navbar-link" href="#acknowledgements">Acknowledgements</a>
+                </li>
+                <li class="navbar-item">
+                    <a class="navbar-link" href="#references">References</a>
+                </li>
+            </ul>
+        </div>
+    </nav>
+
+    <section class="header" id="intro">
+        <h2 class="title">Surface Simplification using Intrinsic Error Metrics</h2>
+        <h6>Seminar by Andreas Paul Bruno Lönne (<a href="mailto:loenne@campus.tu-berlin.de">loenne@campus.tu-berlin.de</a>)
+        </h6>
+
+        <div class="row">
+            <div class="four columns category" style="text-align: center">
+                <img class="u-max-full-width" src="images/bumpy19842.png">
+            </div>
+            <div class="four columns category" style="text-align: center">
+                <img class="u-max-full-width" src="images/bumpy2000.png">
+            </div>
+            <div class="four columns category" style="text-align: center">
+                <img class="u-max-full-width" src="images/bumpy100.png">
+            </div>
+            <p class="section-description">
+                In the regime of geometry processing, solving equations on a surface can become untenably expensive for high-resolution meshes.
+                Hence, it is common practice to instead estimate the result by solving a simplified version of the initial problem.
+<!--                 Hence, it is common practice to trade off the accuracy of the result in order to cheapen its computation. -->
+<!--                 Hence, to be able to obtain solutions despite this adversity one can trade off some accuracy of the result in order to cheapen its computation. -->
+<!--                 To this end Liu et al. propose to simplify the surface into a coarse triangulation of its flattened area via the following approach. -->
+                To this end, Liu et al. propose a simplification algorithm that seeks to coarsen the surface of a triangle mesh into progressively less refined intrinsic triangulations while keeping area distortion minimal. [<a href="#1">1</a>]
+                These simplified intrinsic surfaces can then be used to approximate the solutions to problems on the original surface.
+                In this documentation, I will give a brief overview of the intrinsic simplification technique and lay out the details and results of my reimplementation.
+            </p>
+        </div>
+    </section>
+
+    <div class="docs-section" id="isimp">
+        <div class="u-pull-right" style="width: 37.5%;" id="fig1">
+            <div class="column category" style="text-align: center;">
+                <img class="u-two-thirds-width" src="images/labeled_pentagon_simp_shifted.png">
+            </div>
+            <h6 style="text-align: center;"><b>Figure 1:</b> Intrinsic operations</h6>
+        </div>
+        <h3 class="section-heading">Intrinsic Simplification</h3>
+        <p class="section-description">
+            Overall, intrinsic simplification is a greedy decimation algorithm
+            that progressively removes vertices from the intrinsic triangulation of the original mesh
+            in order to obtain a simplified version of it.
+            Therein, the intrinsic triangulation is exclusively mutated using the following three operations 
+            that are applied over the course of the simplification:
+            <ul>
+                <li class="popover-item">
+                    <b>INTRINSIC EDGE FLIP</b> (Edge flip that preserves geometry. [<a href="#2">2</a>])
+                </li>
+                <li class="popover-item">
+                    <b>VERTEX FLATTENING</b> (Curvature redistribution via intrinsic edge length scaling.)
+                </li>
+                <li class="popover-item">
+                    <b>VERTEX REMOVAL</b> (Flat vertex removal & remeshing.)
+                </li>
+            </ul>
+            Consequently, the point-wise bijective mapping between fine and coarse triangulations can be decomposed into successive applications of these operations.
+            This makes the record of the performed operations a natural representation for this mapping, 
+            which is used to transfer quantities between surfaces of different resolutions.
+            <br>
+            <br>
+            Further, to guide the simplification, Liu et al. propose the intrinsic curvature error metric.
+            This is a quantity defining the cost of a vertex removal based on the transport cost of its Gaussian curvature.
+            In essence, they take the perspective that vertex removal is equivalent to vertex flattening.
+            Meaning that depriving a vertex of its curvature by redistributing it among its neighbors is the same as its removal.
+            For this reason, a vertex's removal is penalized via the optimal transport cost of its curvature to its neighbors.
+            And each simplification step hence removes a vertex of least cost.
+            However, a more detailed description can be found in the original paper. [<a href="#1">1</a>]
+        </p>
+    </div>
+
+    <div class="docs-section" id="implementation">
+        <h3 class="section-heading">Implementation</h3>
+        <p class="section-description">
+            My implementation is written in C++ and can be found under <a href="https://github.com/Brunololos/cgs-intrinsic-simplification">https://github.com/Brunololos/cgs-intrinsic-simplification</a>.
+            It uses <a href="#3">polyscope</a> to realize the user interface and leans on <a href="#4">geometry-central</a> and <a href="#5">Eigen</a> for various utilities.
+            It implements the intrinsic simplification method and also solves an exemplary heat diffusion problem on the simplified triangulation.
+            The results are then visualized on the surface of the fine mesh using texture mapping.
+            All examples have been run on a desktop PC using an Intel® Core™ i5-12600K CPU and 31.8 GB of memory.
+            <br>
+            <br>
+            As a distinguishing feature to the <a href="https://github.com/HTDerekLiu/intrinsic-simplification">official implementation</a>, mine aims to visualize the entire course of the simplification.
+            Whereas the former expects a target number of remaining vertices as an argument, the latter simplifies until failure and allows the user
+            to step through the simplification by means of the user interface.
+            To this end, care was taken to embed all necessary mapping information directly into the simplification operations contained in the simplification record.
+            This allows the computation of the simplification map without having to store or recover the intrinsic triangulation for each intermediate simplification state.
+            And as such, the program solely has to recover the intrinsics when they are needed for solving a problem on a specific simplification state (e.g., building the Laplacian for heat diffusion).
+        </p>
+        <div class="row">
+            <div class="one-half column category">
+                <h4 class="section-heading">Intrinsic Simplification</h4>
+                <p class="section-description">
+                    The simplification itself is mostly conducted analogous to Liu et al. and solely relies on the intrinsic curvature error metric 
+                    to drive simplification.
+                    However, noteworthy deviations include:
+                    <br>
+                    <ul>
+                        <li class="popover-item">
+                            Boundary simplification is not supported. 
+<!--                             Meshes with a boundary are still simplified, but only interior vertices are removed. -->
+                            <i>(Meshes with a boundary can be simplified, but only interior vertices are removed, as is evident in <a href="#fig2">figure 2</a>.)</i>
+                        </li>
+                        <li class="popover-item">
+                            When failing to flip a vertex to degree 3, edge flips performed as part of the same subroutine are not reverted.
+                            <i>(The intrinsic simplification remains valid but builds up superfluous edge flips.)</i>
+                        </li>
+                        <li class="popover-item">
+                            When encountering triangle inequality violations after vertex flattening, 
+                            Liu et al. suggest resolving this matter by attempting to flip back into a valid constellation via intrinsic edge flips. 
+                            However, the present implementation forgoes this step and continues by considering the vertex flattening to have failed. 
+                            <i>(This can incur higher distortions in the simplification mapping as the next least distorting vertex has to be removed instead.)</i>
+                        </li>
+                    </ul>
+                </p>
+            </div>
+            <div class="one-half column category">
+                <img class="u-max-full-width" src="images/sphereHalf210_trimmed.png" id="fig2">
+                <h6 style="text-align: center;"><b>Figure 2:</b> half_sphere mesh simplified to 210 vertices. <i>(In later simplification stages, elongated triangles emanate from the boundary due to missing boundary simplification.)</i></h6>
+            </div>
+        </div>
+        <div class="u-pull-left" style="width: 50%;" id="fig3">
+            <h3 class="section-heading"> </h3>
+            <div class="row">
+                <div class="u-pull-left" style="width: 45%;">
+<!--                 <div class="one-half column category" style="text-align: center;"> -->
+                    <img class="u-max-full-width" src="images/h_bob5344.png">
+                </div>
+                <div class="u-pull-left" style="width: 45%;">
+<!--                 <div class="one-half column category" style="text-align: center;"> -->
+<!--                     <img class="u-max-full-width" src="images/bob5344.png"> -->
+                    <img class="u-max-full-width" src="images/hd_bob5344 (16.03s).png">
+                </div>
+                <div class="u-pull-left" style="width: 10%;">
+                </div>
+            </div>
+            <center><p>(a) 16.03s for 5344 vertices</p></center>
+            <div class="row">
+                <div class="u-pull-left" style="width: 45%;">
+<!--                 <div class="one-half column category" style="text-align: center;"> -->
+                    <img class="u-max-full-width" src="images/h_bob2500.png">
+                </div>
+                <div class="u-pull-left" style="width: 45%;">
+<!--                 <div class="one-half column category" style="text-align: center;"> -->
+<!--                     <img class="u-max-full-width" src="images/bob2500.png"> -->
+                    <img class="u-max-full-width" src="images/hd_bob2500 (0.93s).png">
+                </div>
+                <div class="u-pull-left" style="width: 10%;">
+                </div>
+            </div>
+            <center><p>(b) 0.93s for 2500 vertices</p></center>
+            <div class="row">
+                <div class="u-pull-left" style="width: 45%;">
+<!--                 <div class="one-half column category" style="text-align: center;"> -->
+                    <img class="u-max-full-width" src="images/h_bob500.png">
+                </div>
+                <div class="u-pull-left" style="width: 45%;">
+<!--                 <div class="one-half column category" style="text-align: center;"> -->
+<!--                     <img class="u-max-full-width" src="images/bob500.png"> -->
+                    <img class="u-max-full-width" src="images/hd_bob500 (0.01s).png">
+                </div>
+                <div class="u-pull-left" style="width: 10%;">
+                </div>
+            </div>
+            <center><p>(c) 0.01s for 500 vertices</p></center>
+            <h6 style="text-align: center;"><b>Figure 3:</b> Heat diffusion on simplified intrinsics with <br>2 Newton steps & step size 0.001. 
+                Redistributed initial<br>heat (left), diffused heat (right).</h6>
+        </div>
+        <h4 class="section-heading">Heat diffusion</h4>
+        <p class="section-description">
+            When it comes to heat diffusion, the implementation employs a Cholesky solver to compute implicit Newton steps 
+            using the cotangent discretization of the Laplace-Beltrami operator. 
+            With the goal of maintaining consistent initial conditions for the diffusion throughout the simplification,
+            the initial heat is sampled randomly from a uniform distribution before simplification<!--  at the beginning of the procedure  -->
+            and is redistributed with each vertex removal in the following way:
+            <p id="eq1" class="section-description">
+                \[h_n'=w_nh_v+(1-w_n)h_n \hspace{4mm}\text{with}\hspace{4mm} n\in N(v)\]
+            </p>
+            <center><p class="section-description" style="width: 100%; text-align: left;">
+                <i>
+                where \(v\) is the removed vertex,
+                \(N(i)\) is the neighborhood of \(i\), 
+                \(h_i\) is the current heat at \(i\), 
+                \(h_i'\) is the next heat at \(i\), 
+<!--                 and \(w_i=\frac{\delta_{m_i}}{m_i'}\) is the weighting factor computed for vertex \(i\)  -->
+                and \(w_i=\delta_{m_i}/m_i'\) is the weighting factor computed for \(i\) 
+                from its change in circumcentric dual mass \(\delta_{m_i}\) and its circumcentric dual mass \(m_i'\) after the vertex removal.
+                </i>
+            </p></center>
+            As per the above <a href="#eq1">equation</a>, each redistribution is performed by linearly blending 
+            the removed vertex's heat into the heat of each neighbor. 
+            To this end, each neighbor's circumcentric dual masses before and after the vertex removal are computed.
+            And the blending weight is determined as the fraction of a neighbor's gained circumcentric dual area divided by its total area after the removal.
+<!--             with the goal of retaining information about the heat of removed vertices for heat diffusion.  -->
+            <br>
+            <br>
+            Core to this computation is the notion that each vertex's heat value is a representative discretization 
+            for the continuous heat field inside that vertex's circumcentric dual cell. 
+            But since during vertex removal, the removed vertex's circumcentric dual cell is implicitly partitioned 
+            and redistributed to its neighbors, the heat values have to be adapted in order to remain representative. 
+            And thus, by making the assumption that heat values are constant in each circumcentric dual cell, 
+            heat values are combined linearly, weighted by their corresponding areas.
+<!--             <br>
+            <br>
+            Further, once heat diffusion is finished, the heat redistribution is reversed using the same weights from before. 
+            This is done by first computing the previous heat of the removed vertex as a composition of diffused heat values, 
+            weighted by the corresponding areas that were redistributed to the neighbors of vertex \(v\):
+            <p id="eq2" class="section-description">
+                \[h_v=\frac{\sum_{n\in N(v)}\delta_{m_n}h_n'}{m_v}\]
+            </p>
+            <center><p class="section-description" style="width: 100%; text-align: left;">
+                <i>
+                where \(v\) is the removed vertex,
+                \(N(i)\) is the neighborhood of \(i\), 
+                \(h_i\) is the previous heat at \(i\), 
+                \(h_i'\) is the current heat at \(i\),
+                \(\delta_{m_i}\) is the change in circumcentric dual mass of \(i\)
+                and \(m_i'\) is the circumcentric dual mass of \(i\) before removal.
+                </i>
+            </p></center>
+            and then solving <a href="#eq1">equation 1</a> for \(h_n\) with \(n\in N(v)\). -->
+        </p>
+        <h4 class="section-heading">Texturing & Snapshots</h4>
+        <p class="section-description">
+            Before simplification, each texture pixel that lies within the UV projection of a face of the input mesh is registered 
+            as a barycentric coordinate at that face.
+
+            During the simplification, these points are updated step by step 
+            as the simplification mapping is created so that they can be used for texturing.
+
+            Then, after the conclusion of the simplification, the texture pixels can be colored, depending on what face 
+            in the coarse triangulation their corresponding barycentric counterpart was mapped to.
+            For the triangulation texture, the color is assigned depending on a coloring of the coarsened faces. 
+            <i>(Colorings are computed and stored after each vertex removal. 
+            For more fine-grained simplification states, the colorings are computed on demand.)</i>
+            And for the heat texture, a barycentric point's heat is calculated through barycentric interpolation 
+            of the diffused heat. This heat in turn is mapped to a color with a color mapping.
+            <br>
+            <br>
+            Moreover, to improve the responsiveness of the viewer, the application periodically takes snapshots 
+            of the barycentric points throughout the mapping.
+            The simplification mapping can then be replayed from the latest snapshot instance instead of the initial state.
+            In this way, snapshots trade off memory usage for viewer fluidity.
+
+            Since snapshots can take up large amounts of memory, 
+            the program offers startup options to adjust the snapshot frequency and resolution of the rendered texture.
+        </p>
+    </div>
+
+    <div class="docs-section" id="results">
+        <h3 class="section-heading">Results</h3>
+<!--         <div class="u-pull-right" style="width: 60%;" id="fig4">
+            <div class="one-half column category" style="text-align: center;">
+                <img class="u-max-full-width" src="images/armadillo_30K15002_flipped.png">
+                <p>(a) 15002 vertices</p>
+                <img class="u-max-full-width" src="images/armadillo_30K200_flipped.png">
+                <p>(c) 200 vertices</p>
+            </div>
+            <div class="one-half column category" style="text-align: center;">
+                <img class="u-max-full-width" src="images/armadillo_30K7500_flipped.png">
+                <p>(b) 7500 vertices</p>
+                <img class="u-max-full-width" src="images/armadillo_30K47_flipped.png">
+                <p>(d) 47 vertices</p>
+            </div>
+            <h6 style="text-align: center;"><b>Figure 4:</b> Simplification of high resolution armadillo with 15002 vertices</h6>
+        </div> -->
+        <div class="u-pull-right" style="width: 60%;" id="fig4">
+            <div class="one-half column category" style="text-align: center;">
+                <img class="u-max-full-width" src="images/dragon_fat_flipped.png">
+                <p>(a) 15746 vertices</p>
+                <img class="u-max-full-width" src="images/dragon_fat1000_flipped.png">
+                <p>(c) 1000 vertices</p>
+            </div>
+            <div class="one-half column category" style="text-align: center;">
+                <img class="u-max-full-width" src="images/dragon_fat7500_flipped.png">
+                <p>(b) 7500 vertices</p>
+                <img class="u-max-full-width" src="images/dragon_fat100_flipped.png">
+                <p>(d) 100 vertices</p>
+            </div>
+            <h6 style="text-align: center;"><b>Figure 4:</b> Simplification of high resolution dragon with 15746 vertices</h6>
+        </div>
+        <p class="section-description">
+            All things considered, my reimplementation provides a multiresolution visualization of intrinsic simplification, 
+            is able to reduce most meshes down to only a few vertices and can even handle high-resolution meshes. 
+            However, especially on heavily simplified triangulations and those that contain highly degenerate triangles numerical issues arise. [<a href="#fig4">fig. 4.d</a>]
+            Barycentric coordinates of surface points mapped through the simplification map cease being partitions of unity
+            and intrinsic edge-lengths begin to violate the triangle inequality more and more.
+            These issues are self-compounding, which leads to higher and higher distortions over the course of the simplification. 
+            <br>
+            <br>
+            In retrospect it also turns out, that making the simplification mapping independently calculable <i>(by embedding intrinsic information directly into 
+            the mapping operations)</i> did not provide a significant performance gain as the intrinsics can be recovered on demand very fast, even for large meshes.
+<!--             This allows to compute the texture mapping for the intrinsic triangulation without intrinsics recovery, 
+            but does not make a noticeable difference as opposed to using intrinsics recovery. -->
+        </p>
+        <h4 class="section-heading">Further Work</h4>
+        Open work includes implementing boundary simplification and the inverse simplification map.
+        Given the implementations numerical problems, it further seems sensible to also focus on improving the robustness of its computations.
+        Computations especially sensitive in this regard are the computation of barycentric coordinates, as well as intrinsic edge flips and vertex flattening.
+        For these operations, checks for degenerate triangles could be performed to better handle those cases.
+        One may also seek to augment the error term by other quantities, such as an area penalty to enforce more uniform triangle size.
+        And finally, it stands to reason that the viewer fluidity would benefit from tracking triangulation colorings with a multiresolution map, analogous to the simplification map.
+<!--             introduce multiresolution coloring procedure (not to have to always recalculate the colorings for each resolution & store them) -->
+    </div>
+
+    <div class="docs-section" id="acknowledgements">
+        <h3 class="section-heading">Acknowledgements</h3>
+        <p class="section-description">
+            I would like to genuinely express my thanks to Ugo Pavo Finnendahl, who lent me his invaluable interest and counsel, 
+            and the TU&nbspBerlin chair of Computer Graphics for offering the opportunity to take part in this semester's CG Seminar. 
+            Lastly, I want to thank you, the reader, who showed interest in this topic and also seminar. 
+            For questions and remarks, feel free to contact me at <a href="loenne@campus.tu-berlin.de">loenne@campus.tu-berlin.de</a>.
+        </p>
+    </div>
+
+    <div class="docs-section" id="references">
+        <h3 class="section-heading">References</h3>
+        <ul class="popover-list">
+            <li class="popover-item" id="1">
+                [1] Hsueh-Ti Derek Liu, Mark Gillepsie, Benjamin Chislett, Nicholas Sharp, Alec Jacobson, and Keenan Crane. 2023. Surface Simplification using Intrinsic Error Metrics. <i>ACM Trans. Graph.</i> 42, 4 (August 2023), 16 pages. <a href="https://doi.org/10.1145/3592403">https://doi.org/10.1145/3592403</a>
+            </li>
+            <li class="popover-item" id="2">
+                [2] Nicholas Sharp, Mark Gillepsie, and Keenan Crane. Geometry processing with intrinsic triangulations. <i>SIGGRAPH '21: ACM SIGGRAPH 2021 Courses.</i> doi: 10.1145/3450508.3464592. URL <a href="https://par.nsf.gov/biblio/10313027">https://par.nsf.gov/biblio/10313027</a>
+            </li>
+            <li class="popover-item" id="3">
+                [3] Nicholas Sharp et al. Polyscope, 2019. <a href="https://polyscope.run">https://polyscope.run</a>
+            </li>
+            <li class="popover-item" id="4">
+                [4] Nicholas Sharp, Keenan Crane, et al. Geometrycentral: A modern C++ library of data structures and algorithms for geometry processing. 2019. <a href="https://geometry-central.net">https://geometry-central.net</a>
+            </li>
+            <li class="popover-item" id="4">
+                [5] Ga&#235;l Guennebaud, Beno&#238;t Jacob, et al. Eigen v3. <a href="http://eigen.tuxfamily.org">http://eigen.tuxfamily.org</a>
+            </li>
+        </ul>
+    </div>
+
+</div>
+
