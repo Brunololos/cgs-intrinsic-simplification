@@ -60,6 +60,7 @@ void map_current_from_to(iSimpData &iSData, const int from_mapping_idx, const in
 
 void unredistribute_heat(iSimpData &iSData, Eigen::VectorXd &heat)
 {
+  return;
   for (int i = iSData.heat_mapping.size() - 1; i >= 0; i--)
   {
     heatRedist hredist = iSData.heat_mapping[i];

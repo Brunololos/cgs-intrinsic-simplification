@@ -12,7 +12,6 @@
 
 #include "isimp.hpp"
 #include "heat_diff.hpp"
-#include "screenshot.hpp"
 #include "lscm_wrapper.hpp"
 #include "query_texture_barycentrics.hpp"
 
@@ -26,7 +25,7 @@ enum class ISIMP_MODE
 int main(int argc, char *argv[])
 {
   // PROGRAM SETTINGS
-  std::string filename = "../../meshes/spot.obj";
+  std::string filename = "../meshes/spot.obj";
   int TEXTURE_WIDTH = 1000;
   int TEXTURE_HEIGHT = 1000;
   int snapshot_interval = 50;
@@ -39,7 +38,6 @@ int main(int argc, char *argv[])
   double diffusion_stepsize;
   double min_diff_stepsize = 0.0001;
   double max_diff_stepsize = 0.01;
-  // bool unredistribute_heat = true;
 
   // UI TRIGGERS/STATE
   bool do_intrinsics_recovery = true;
@@ -529,19 +527,6 @@ int main(int argc, char *argv[])
     }
   };
 
-  // update entire mesh
-  auto refresh_coarse_mesh = [&]()
-  {
-    // if (psCoarseMesh != nullptr)
-    // {
-    //   // polyscope::unregister...
-    // }
-    // TODO: update connectivity
-    psCoarseMesh  = polyscope::registerSurfaceMesh("coarse mesh", U, H);
-    init_viewer_data();
-    update_textures();
-  };
-
   // update mesh vertices
   auto refresh_mesh_vertices = [&]()
   {
@@ -932,10 +917,8 @@ int main(int argc, char *argv[])
     }
   }
   if(!verbose_simplification) { finish_progressBar(bar); }
-  // refresh_coarse_mesh(); //TODO: update coarse mesh
   min_n_vertices = iSData.intrinsicMesh->nVertices();
 
-  // psCoarseMesh  = polyscope::registerSurfaceMesh("coarse mesh", U, H); // TODO: visualize coarse mesh
   psMesh = polyscope::registerSurfaceMesh("input mesh", V, F);
 
   // convert parameterization to polyscope's desired input format

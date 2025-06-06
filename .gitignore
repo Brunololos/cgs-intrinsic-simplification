@@ -2,7 +2,6 @@
 *.slo
 *.lo
 *.o
-*.obj
 
 # Precompiled Headers
 *.gch
@@ -37,5 +36,3 @@
 
 build/*
 out/*
-images/*
-videos/*

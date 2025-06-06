@@ -60,10 +60,6 @@ else()
   message( FATAL_ERROR "Unrecognized compiler [${CMAKE_CXX_COMPILER_ID}]" )
 endif()
 
-# # Find Eigen
-# add_subdirectory("deps/eigen")
-# find_package(Eigen3 3.4.90 REQUIRED NO_MODULE)
-
 include(FetchContent)
 set(EIGEN_VERSION 3.3)
 find_package(Eigen3 ${EIGEN_VERSION} QUIET)
@@ -79,7 +75,7 @@ if(NOT EIGEN3_FOUND)
   unset(BUILD_TESTING CACHE)
 endif()
 
-add_subdirectory("geometry-central")
+add_subdirectory("deps/geometry-central")
 
 # Add polyscope
 message("\n\n == CMAKE recursively building Polyscope\n")
@@ -90,7 +86,6 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/patr-schm/tinyad.git
   GIT_TAG 75093e14ef0d7bb39657c5f3b2aba1251afaa38c
 )
-#FetchContent_MakeAvailable(tinyad)
 
 FetchContent_GetProperties(tinyad)
 if(NOT tinyad_POPULATED)
@@ -119,13 +114,9 @@ file(GLOB VIEWER_FILES viewer/*.cpp)
 
 add_library(isimp_core STATIC ${SRC_FILES} ${HEADER_FILES})
 target_include_directories(isimp_core PUBLIC include "${CMAKE_CURRENT_SOURCE_DIR}/deps/libigl/include")
-target_link_libraries(isimp_core PUBLIC geometry-central TinyAD) # Eigen3::Eigen) # igl::core
-
-add_executable(${PROJECT_NAME} main.cpp)
-target_link_libraries(${PROJECT_NAME} PUBLIC isimp_core)
+target_link_libraries(isimp_core PUBLIC geometry-central TinyAD)
 
 add_executable(${PROJECT_NAME}_gui ${VIEWER_FILES})
-target_include_directories(${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/polyscope/deps/args/" "${CMAKE_CURRENT_SOURCE_DIR}/deps/libigl/include") # grab args.hxx from polyscope
-target_link_libraries(${PROJECT_NAME}_gui PUBLIC isimp_core polyscope) # Eigen3::Eigen) # igl::glfw igl::opengl igl::imgui igl::png)
+target_link_libraries(${PROJECT_NAME}_gui PUBLIC isimp_core polyscope)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
